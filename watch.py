@@ -314,17 +314,9 @@ def extract_offer_details(
     return final_price, page_price, price_type, extract_discount_info(text)
 
 
-def is_target_gpu(text: str, cfg: dict) -> bool:
-    """Match RTX 5060 Ti 8GB using the whole deal text, not only the title."""
+def gpu_variant(text: str) -> str:
+    """Return 8G or 16G for an unambiguous RTX 5060 Ti listing."""
     t = normalize(text).lower().replace("-", " ").replace("_", " ")
-    if not re.search(r"(?:rtx\s*)?5060\s*ti|5060ti", t, re.I):
-        return False
-
-    # Reject explicit 16GB variants before accepting any 8GB-looking token.
-    if re.search(r"(?<!\d)16\s*g(?:b)?(?!\d)|\bo16g\b|\b16gb\b", t, re.I):
-        return False
-
-    # Common 8GB forms: 8G / 8GB / O8G / -8G / 显存8G.
     has_8g = bool(
         re.search(
             r"(?<!\d)8\s*g(?:b)?(?!\d)|\bo8g\b|显存\s*8\s*g(?:b)?",
@@ -332,7 +324,36 @@ def is_target_gpu(text: str, cfg: dict) -> bool:
             re.I,
         )
     )
-    if not has_8g:
+    has_16g = bool(
+        re.search(
+            r"(?<!\d)16\s*g(?:b)?(?!\d)|\bo16g\b|显存\s*16\s*g(?:b)?",
+            t,
+            re.I,
+        )
+    )
+    # Mixed 8G/16G SKU pages are unsafe for price attribution.
+    if has_8g == has_16g:
+        return ""
+    return "16G" if has_16g else "8G"
+
+
+def is_target_gpu(text: str, cfg: dict) -> bool:
+    """Match an unambiguous RTX 5060 Ti 8GB or 16GB listing."""
+    t = normalize(text).lower().replace("-", " ").replace("_", " ")
+    if not re.search(r"(?:rtx\s*)?5060\s*ti|5060ti", t, re.I):
+        return False
+
+    # Reject generic mixed-model SKU pages such as "RTX5060/5060Ti16G";
+    # the displayed low price may belong to the non-Ti option.
+    if re.search(
+        r"5060\s*/\s*(?:rtx\s*)?5060\s*ti|"
+        r"5060\s*(?:和|及|与|\+)\s*(?:rtx\s*)?5060\s*ti",
+        t,
+        re.I,
+    ):
+        return False
+
+    if not gpu_variant(t):
         return False
 
     for bad in cfg.get("exclude_keywords", []):
@@ -397,9 +418,14 @@ def build_search_queries(cfg: dict) -> list[str]:
             queries.append(q)
             seen.add(q)
 
-    # Use the two shortest/base-like forms for platform-targeted searches to avoid
-    # exploding request count while still surfacing PDD/Taobao/Tmall/Douyin deals.
-    seed_bases = bases[:2] or ["RTX 5060 Ti 8G"]
+    # Use one representative query for each VRAM variant on each marketplace.
+    seed_bases: list[str] = []
+    for wanted in ("8G", "16G"):
+        seed = next((base for base in bases if gpu_variant(base) == wanted), "")
+        if seed:
+            seed_bases.append(seed)
+    if not seed_bases:
+        seed_bases = ["RTX 5060 Ti 8G", "RTX 5060 Ti 16G"]
     for market in markets:
         for base in seed_bases:
             q = f"{base} {market}"
@@ -800,7 +826,7 @@ def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
 
 
 def record_price_history(candidates: list[Candidate], keep_days: int = 30) -> list[dict]:
-    """Persist the lowest observed price per platform for every 5-minute sampling run."""
+    """Persist the lowest observed price per variant and platform every sampling run."""
     rows = _read_history_rows()
     cutoff = now_cn() - timedelta(days=max(1, keep_days))
     kept: list[dict] = []
@@ -811,51 +837,65 @@ def record_price_history(candidates: list[Candidate], keep_days: int = 30) -> li
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=CN_TZ)
             if dt >= cutoff:
+                # All history written before 16G monitoring was enabled is 8G.
+                row["variant"] = row.get("variant") or gpu_variant(row.get("title", "")) or "8G"
                 kept.append(row)
         except Exception:
             continue
 
-    best_by_platform: dict[str, Candidate] = {}
-    for c in candidates:
-        platform = c.platform or "未知平台"
-        prev = best_by_platform.get(platform)
-        if prev is None or c.price < prev.price:
-            best_by_platform[platform] = c
+    best: dict[tuple[str, str], Candidate] = {}
+    for cand in candidates:
+        variant = gpu_variant(cand.title)
+        if not variant:
+            continue
+        platform = cand.platform or "未知平台"
+        key = (variant, platform)
+        prev = best.get(key)
+        if prev is None or cand.price < prev.price:
+            best[key] = cand
 
     sampled_at = now_cn().replace(second=0, microsecond=0).isoformat()
-    if best_by_platform:
-        platforms = set(best_by_platform)
+    if best:
+        keys = set(best)
         kept = [
             row
             for row in kept
             if not (
                 row.get("sampled_at") == sampled_at
-                and row.get("platform") in platforms
+                and ((row.get("variant") or "8G"), row.get("platform") or "未知平台") in keys
             )
         ]
 
-    for platform, c in sorted(best_by_platform.items()):
+    for (variant, platform), cand in sorted(best.items()):
         kept.append(
             {
                 "sampled_at": sampled_at,
+                "variant": variant,
                 "platform": platform,
-                "price": f"{c.price:.2f}",
+                "price": f"{cand.price:.2f}",
                 "page_price": (
-                    f"{c.page_price:.2f}" if c.page_price is not None else ""
+                    f"{cand.page_price:.2f}" if cand.page_price is not None else ""
                 ),
-                "price_type": c.price_type,
-                "title": c.title,
-                "source": c.source,
-                "merchant": c.merchant,
-                "url": c.url,
+                "price_type": cand.price_type,
+                "title": cand.title,
+                "source": cand.source,
+                "merchant": cand.merchant,
+                "url": cand.url,
             }
         )
 
-    kept.sort(key=lambda r: (r.get("sampled_at", ""), r.get("platform", "")))
+    kept.sort(
+        key=lambda r: (
+            r.get("sampled_at", ""),
+            r.get("variant", "8G"),
+            r.get("platform", ""),
+        )
+    )
     _write_csv(
         HISTORY_PATH,
         [
             "sampled_at",
+            "variant",
             "platform",
             "price",
             "page_price",
@@ -867,15 +907,13 @@ def record_price_history(candidates: list[Candidate], keep_days: int = 30) -> li
         ],
         kept,
     )
-    print(
-        f"[history] samples={len(kept)}, platforms_this_run={len(best_by_platform)}"
-    )
+    print(f"[history] samples={len(kept)}, series_this_run={len(best)}")
     return kept
 
 
 def build_hourly_min(history_rows: list[dict]) -> list[dict]:
-    """Aggregate 5-minute samples into one minimum-price point per platform per hour."""
-    grouped: dict[tuple[str, str], dict] = {}
+    """Aggregate samples into one minimum price per variant/platform/hour."""
+    grouped: dict[tuple[str, str, str], dict] = {}
 
     for row in history_rows:
         try:
@@ -883,16 +921,18 @@ def build_hourly_min(history_rows: list[dict]) -> list[dict]:
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=CN_TZ)
             hour = dt.replace(minute=0, second=0, microsecond=0).isoformat()
+            variant = row.get("variant") or gpu_variant(row.get("title", "")) or "8G"
             platform = row.get("platform") or "未知平台"
             price = float(row.get("price", ""))
         except Exception:
             continue
 
-        key = (hour, platform)
+        key = (hour, variant, platform)
         prev = grouped.get(key)
         if prev is None or price < float(prev["price"]):
             grouped[key] = {
                 "hour": hour,
+                "variant": variant,
                 "platform": platform,
                 "price": f"{price:.2f}",
                 "title": row.get("title", ""),
@@ -903,7 +943,7 @@ def build_hourly_min(history_rows: list[dict]) -> list[dict]:
     rows = [grouped[key] for key in sorted(grouped)]
     _write_csv(
         HOURLY_PATH,
-        ["hour", "platform", "price", "title", "source", "url"],
+        ["hour", "variant", "platform", "price", "title", "source", "url"],
         rows,
     )
     return rows
@@ -932,14 +972,16 @@ def write_price_chart_svg(hourly_rows: list[dict]) -> None:
     for row in hourly_rows:
         try:
             dt = datetime.fromisoformat(row["hour"])
-            parsed.append((dt, row["platform"], float(row["price"])))
+            variant = row.get("variant") or "8G"
+            series = f"{variant} {_platform_display_name(row['platform'])}"
+            parsed.append((dt, series, float(row["price"])))
         except Exception:
             continue
 
     if not parsed:
         svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
 <rect width="100%" height="100%" fill="white"/>
-<text x="{width/2}" y="{height/2}" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#555">RTX 5060 Ti 8G price trend — waiting for samples</text>
+<text x="{width/2}" y="{height/2}" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#555">RTX 5060 Ti 8G / 16G price trend — waiting for samples</text>
 </svg>"""
         CHART_PATH.write_text(svg, encoding="utf-8")
         return
@@ -966,7 +1008,7 @@ def write_price_chart_svg(hourly_rows: list[dict]) -> None:
     parts = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="white"/>',
-        '<text x="60" y="38" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#111827">RTX 5060 Ti 8G — 30 Day Price Trend</text>',
+        '<text x="60" y="38" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#111827">RTX 5060 Ti 8G / 16G — 30 Day Price Trend</text>',
         '<text x="60" y="61" font-family="Arial, sans-serif" font-size="14" fill="#6b7280">5-minute checks, charted as hourly minimum price</text>',
     ]
 
@@ -1045,6 +1087,7 @@ def write_dashboard(hourly_rows: list[dict]) -> None:
         latest_label = datetime.fromisoformat(latest_hour).strftime("%Y-%m-%d %H:00")
         rows_html = "\n".join(
             "<tr>"
+            f"<td>{html.escape(row.get('variant') or '8G')}</td>"
             f"<td>{html.escape(row['platform'])}</td>"
             f"<td>¥{float(row['price']):.0f}</td>"
             f"<td>{html.escape(row.get('title',''))}</td>"
@@ -1053,13 +1096,14 @@ def write_dashboard(hourly_rows: list[dict]) -> None:
             for row in latest
         )
         min_text = (
+            f"{html.escape(overall.get('variant') or '8G')} · "
             f"¥{float(overall['price']):.0f} · "
             f"{html.escape(overall['platform'])} · "
             f"{datetime.fromisoformat(overall['hour']).strftime('%Y-%m-%d %H:00')}"
         )
     else:
         latest_label = "等待首批数据"
-        rows_html = '<tr><td colspan="4">暂无价格数据</td></tr>'
+        rows_html = '<tr><td colspan="5">暂无价格数据</td></tr>'
         min_text = "暂无"
 
     page = f"""<!doctype html>
@@ -1067,7 +1111,7 @@ def write_dashboard(hourly_rows: list[dict]) -> None:
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>RTX 5060 Ti 8G 价格走势</title>
+<title>RTX 5060 Ti 8G / 16G 价格走势</title>
 <style>
 body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;margin:0;background:#f5f7fb;color:#111827}}
 main{{max-width:1180px;margin:32px auto;padding:0 18px}}
@@ -1082,19 +1126,19 @@ a{{color:#2563eb;text-decoration:none}}
 <body>
 <main>
 <div class="card">
-<h1>RTX 5060 Ti 8G 价格走势</h1>
+<h1>RTX 5060 Ti 8G / 16G 价格走势</h1>
 <div class="muted">每 5 分钟采集一次；走势图使用每个平台每小时最低价。原始 5 分钟数据保存在 GitHub Actions artifact 中。</div>
 </div>
 <div class="card"><img src="price_chart.svg" alt="30天价格走势图"></div>
 <div class="card">
-<div class="muted">近30天最低</div>
+<div class="muted">近30天最低（8G / 16G 合并）</div>
 <div class="metric">{min_text}</div>
 </div>
 <div class="card">
 <h2>最近一小时最低价</h2>
 <div class="muted">{latest_label}（北京时间）</div>
 <table>
-<thead><tr><th>平台</th><th>最低价</th><th>商品</th><th>链接</th></tr></thead>
+<thead><tr><th>规格</th><th>平台</th><th>最低价</th><th>商品</th><th>链接</th></tr></thead>
 <tbody>{rows_html}</tbody>
 </table>
 <p><a href="hourly_min.csv">下载小时聚合 CSV</a></p>
@@ -1106,11 +1150,16 @@ a{{color:#2563eb;text-decoration:none}}
 
 
 def threshold_for(candidate: Candidate, cfg: dict) -> float:
+    variant = gpu_variant(candidate.title)
+    table = cfg.get("thresholds", {}).get(variant, {})
+    if not table:
+        return 0.0
+
     t = candidate.title.lower()
     for brand in cfg.get("good_brands", []):
         if brand.lower() in t:
-            return float(cfg["thresholds"]["good_brand"])
-    return float(cfg["thresholds"]["normal"])
+            return float(table["good_brand"])
+    return float(table["normal"])
 
 
 def should_alert(candidate: Candidate, cfg: dict) -> bool:
@@ -1131,7 +1180,7 @@ def should_alert(candidate: Candidate, cfg: dict) -> bool:
 
 def alert_key(c: Candidate) -> str:
     base = c.url.split("#", 1)[0]
-    return f"{c.platform}|{base}"
+    return f"{gpu_variant(c.title)}|{c.platform}|{base}"
 
 
 def dedupe_ok(c: Candidate, state: dict, cfg: dict) -> bool:
@@ -1159,6 +1208,7 @@ def dedupe_ok(c: Candidate, state: dict, cfg: dict) -> bool:
 
 def format_message(c: Candidate, cfg: dict) -> str:
     threshold = threshold_for(c, cfg)
+    variant = gpu_variant(c.title) or "未知显存"
     age = ""
     if c.published_at:
         try:
@@ -1175,7 +1225,7 @@ def format_message(c: Candidate, cfg: dict) -> str:
     )
     discount_info = c.discount_info or "未识别（以结算页为准）"
     return (
-        "🔥【RTX 5060 Ti 8G 好价】\n"
+        f"🔥【RTX 5060 Ti {variant} 好价】\n"
         f"型号：{c.title}\n"
         f"平台：{c.platform}{merchant}\n"
         f"页面/API价：{page_price}\n"
@@ -1211,7 +1261,7 @@ def send_feishu(text: str) -> None:
 
 def send_test() -> None:
     send_feishu(
-        "✅【5060 Ti 8G 价格监控测试】\n"
+        "✅【5060 Ti 8G / 16G 价格监控测试】\n"
         "GitHub Actions → 飞书通知已打通。\n"
         f"测试时间：{now_cn().strftime('%Y-%m-%d %H:%M:%S')}（北京时间）"
     )
