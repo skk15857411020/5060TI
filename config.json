@@ -2,7 +2,8 @@
   "search_keywords": [
     "RTX 5060 Ti 8G",
     "5060Ti 8G",
-    "5060 Ti 8GB"
+    "5060 Ti 8GB",
+    "RTX5060Ti 8G"
   ],
   "thresholds": {
     "normal": 2999,
@@ -39,5 +40,14 @@
     "direct": true
   },
   "direct_urls": [],
-  "history_retention_days": 30
+  "history_retention_days": 30,
+  "marketplaces": [
+    "京东",
+    "拼多多",
+    "淘宝",
+    "天猫",
+    "抖音"
+  ],
+  "smzdm_pages": 3,
+  "smzdm_page_size": 30
 }
