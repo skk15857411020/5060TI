@@ -70,6 +70,13 @@ def test_currency_price_beats_model_number():
     assert price_type == "API价"
 
 
+def test_final_price_is_not_relabelled_as_page_price():
+    price, page_price, price_type, _ = watch.extract_offer_details("券后2899元")
+    assert price == 2899
+    assert page_price is None
+    assert price_type == "券后价"
+
+
 def test_smzdm_api_does_not_fall_back_to_model_number():
     class Response:
         def __init__(self, rows):
