@@ -22,10 +22,10 @@
 <text x="734.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-27</text>
 <text x="948.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-27</text>
 <text x="1162.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-28</text>
-<polyline points="627.0,101.5 734.0,101.5 841.0,101.5 948.0,101.5 1055.0,101.5 1162.0,101.5" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="578.4,101.5 675.6,101.5 772.9,101.5 870.2,101.5 967.5,101.5 1064.7,101.5 1162.0,101.5" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="35" x2="644" y2="35" stroke="#2563eb" stroke-width="3"/>
 <text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G JD</text>
-<polyline points="92.0,409.0 199.0,515.5 306.0,515.5 413.0,515.5 520.0,515.5 627.0,515.5 734.0,515.5 841.0,515.5 948.0,515.5 1055.0,409.0 1162.0,409.0" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,409.0 189.3,515.5 286.5,515.5 383.8,515.5 481.1,515.5 578.4,515.5 675.6,515.5 772.9,515.5 870.2,515.5 967.5,409.0 1064.7,409.0 1162.0,409.0" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="750" y1="35" x2="774" y2="35" stroke="#16a34a" stroke-width="3"/>
 <text x="781" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G JD</text>
 <text x="600.0" y="602" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>
