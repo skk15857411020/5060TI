@@ -5,11 +5,10 @@ import json
 import os
 import re
 import sys
-import time
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 from urllib.parse import quote, urljoin
 
 import requests
@@ -29,6 +28,23 @@ UA = (
 )
 
 CN_TZ = timezone(timedelta(hours=8))
+PRICE_NUMBER = r"([1-9]\d{2,4}(?:\.\d{1,2})?)"
+
+# Order matters: an explicit checkout/final price must beat a coupon or member price.
+FINAL_PRICE_RULES = [
+    (
+        "最终到手/实付价",
+        r"(?:最终(?:到手)?价|最终到手|实际支付|实付(?:价)?|到手价?)",
+    ),
+    ("国补后价", r"(?:国补(?:后|价)|政府补贴后|补贴后)"),
+    ("百亿补贴价", r"(?:百亿补贴(?:后|价)?)"),
+    ("券后价", r"(?:(?:领|用)券后|券后(?:价)?)"),
+    ("满减后价", r"(?:满减后(?:价)?)"),
+    ("下单价", r"(?:下单价)"),
+    ("拼单价", r"(?:拼单价)"),
+    ("PLUS价", r"(?:PLUS(?:会员)?价)"),
+    ("会员价", r"(?:会员价)"),
+]
 
 
 @dataclass
@@ -41,6 +57,9 @@ class Candidate:
     merchant: str = ""
     published_at: str = ""
     reliability: str = "线索"
+    page_price: Optional[float] = None
+    price_type: str = "页面/API价"
+    discount_info: str = ""
 
 
 def now_cn() -> datetime:
@@ -90,41 +109,179 @@ def save_state(state: dict) -> None:
     )
 
 
-def parse_price(text: str) -> Optional[float]:
-    if not text:
-        return None
-    t = (
-        text.replace(",", "")
-        .replace("￥", "¥")
-        .replace("元", "")
-        .replace("到手", "")
-        .replace("券后", "")
-        .replace("补贴后", "")
-        .replace("拼单价", "")
-        .replace("最低", "")
-    )
-    # Prefer a price adjacent to ¥/￥ first.
-    m = re.search(r"[¥]\s*([1-9]\d{2,4}(?:\.\d{1,2})?)", t)
-    if not m:
-        m = re.search(r"(?<!\d)([1-9]\d{2,4}(?:\.\d{1,2})?)(?!\d)", t)
-    if not m:
-        return None
+def normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip()
+
+
+def _price_value(raw: str) -> Optional[float]:
     try:
-        value = float(m.group(1))
-    except ValueError:
+        value = float(raw.replace(",", ""))
+    except (AttributeError, ValueError):
         return None
     if 1000 <= value <= 10000:
         return value
     return None
 
 
-def normalize(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "")).strip()
+def _blocked_price_spans(text: str) -> list[tuple[int, int]]:
+    """Return numeric spans that are model numbers or discount components."""
+    spans: list[tuple[int, int]] = []
+    patterns = [
+        # The GPU model number is never a price.
+        r"(?:RTX\s*)?(5060)\s*Ti",
+        # Neither the threshold nor reduction in 满3000减300 is the sale price.
+        r"满\s*([1-9]\d{2,4}(?:\.\d{1,2})?)\s*(?:元)?\s*(?:减|返|赠)\s*([1-9]\d{1,4}(?:\.\d{1,2})?)",
+        # A coupon face value is a condition, not the product price.
+        r"(?:领|叠加?|使用)?\s*([1-9]\d{1,4}(?:\.\d{1,2})?)\s*(?:元)?\s*(?:优惠)?券",
+        r"(?:优惠券|券)(?!后)\s*[:：]?\s*([1-9]\d{1,4}(?:\.\d{1,2})?)\s*(?:元)?",
+    ]
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, re.I):
+            spans.extend(
+                match.span(i)
+                for i in range(1, len(match.groups()) + 1)
+                if match.group(i) is not None
+            )
+    return spans
+
+
+def _is_blocked(span: tuple[int, int], blocked: list[tuple[int, int]]) -> bool:
+    return any(span[0] < end and span[1] > start for start, end in blocked)
+
+
+def _first_usable_price(
+    text: str,
+    pattern: str,
+    blocked: list[tuple[int, int]],
+) -> Optional[float]:
+    for match in re.finditer(pattern, text, re.I):
+        if _is_blocked(match.span(1), blocked):
+            continue
+        value = _price_value(match.group(1))
+        if value is not None:
+            return value
+    return None
+
+
+def extract_final_price(text: str) -> tuple[Optional[float], str]:
+    """Extract a semantically labelled payable price, in explicit priority order."""
+    t = normalize(text).replace(",", "")
+    if not t:
+        return None, ""
+
+    for price_type, label in FINAL_PRICE_RULES:
+        patterns = [
+            rf"{label}[^\d¥￥]{{0,12}}[¥￥]?\s*{PRICE_NUMBER}\s*(?:元)?",
+            rf"[¥￥]?\s*{PRICE_NUMBER}\s*(?:元)?[^\d]{{0,8}}{label}",
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, t, re.I)
+            if match:
+                value = _price_value(match.group(1))
+                if value is not None:
+                    return value, price_type
+    return None, ""
+
+
+def parse_price(text: str, *, allow_bare: bool = True) -> Optional[float]:
+    """Parse one safe price while excluding GPU models and discount thresholds."""
+    if not text:
+        return None
+    t = normalize(text).replace(",", "")
+
+    final_price, _ = extract_final_price(t)
+    if final_price is not None:
+        return final_price
+
+    blocked = _blocked_price_spans(t)
+    patterns = [
+        rf"[¥￥]\s*{PRICE_NUMBER}",
+        rf"(?:页面价|活动价|原价|售价|标价|现价|京东价|商品价)[^\d]{{0,10}}[¥￥]?\s*{PRICE_NUMBER}",
+        rf"(?<!\d){PRICE_NUMBER}\s*元(?!券)",
+    ]
+    if allow_bare:
+        patterns.append(rf"(?<!\d){PRICE_NUMBER}(?!\d)")
+
+    for pattern in patterns:
+        value = _first_usable_price(t, pattern, blocked)
+        if value is not None:
+            return value
+    return None
+
+
+def extract_discount_info(text: str) -> str:
+    """Extract concise, de-duplicated discount conditions for notifications."""
+    t = normalize(text).replace(",", "")
+    if not t:
+        return ""
+
+    info: list[str] = []
+
+    def add(value: str) -> None:
+        value = re.sub(r"\s+", "", value)
+        if value and value not in info:
+            info.append(value)
+
+    for match in re.finditer(
+        r"满\s*\d+(?:\.\d+)?\s*(?:元)?\s*减\s*\d+(?:\.\d+)?\s*(?:元)?",
+        t,
+        re.I,
+    ):
+        add(match.group(0))
+
+    coupon_patterns = [
+        r"(?:领|叠加?|使用)?\s*\d+(?:\.\d+)?\s*(?:元)?\s*(?:优惠)?券",
+        r"(?:优惠券|券)(?!后)\s*[:：]?\s*\d+(?:\.\d+)?\s*(?:元)?",
+    ]
+    for pattern in coupon_patterns:
+        for match in re.finditer(pattern, t, re.I):
+            add(match.group(0))
+
+    if "百亿补贴" in t:
+        add("百亿补贴")
+    elif "国补" in t:
+        match = re.search(r"国补\s*\d+(?:\.\d+)?\s*%", t)
+        add(match.group(0) if match else "国补")
+    elif "补贴" in t:
+        add("补贴")
+
+    keyword_conditions = [
+        (r"券后|领券后|用券后", "券后"),
+        (r"满减后", "满减后"),
+        (r"PLUS(?:会员)?价", "PLUS会员价"),
+        (r"会员价", "会员价"),
+        (r"拼单价", "拼单价"),
+        (r"下单价", "下单价"),
+    ]
+    for pattern, label in keyword_conditions:
+        if re.search(pattern, t, re.I):
+            add(label)
+
+    return " + ".join(info)
+
+
+def extract_offer_details(
+    text: str,
+    api_price: object = None,
+    api_label: str = "API价",
+) -> tuple[Optional[float], Optional[float], str, str]:
+    """Return final price, page/API price, price type and discount conditions."""
+    final_price, price_type = extract_final_price(text)
+    page_price = parse_price(str(api_price or ""), allow_bare=True)
+
+    if page_price is None:
+        # Generic page extraction is deliberately not allowed to use bare numbers.
+        page_price = parse_price(text, allow_bare=False)
+
+    if final_price is None:
+        final_price = page_price
+        price_type = api_label if final_price is not None else ""
+
+    return final_price, page_price, price_type, extract_discount_info(text)
 
 
 def is_target_gpu(title: str, cfg: dict) -> bool:
     t = title.lower().replace("-", " ").replace("_", " ")
-    # Require 5060 + Ti + 8G/8GB in the same title.
     if not re.search(r"5060\s*ti", t, re.I):
         return False
     if not re.search(r"\b8\s*g(?:b)?\b|8g(?:b)?", t, re.I):
@@ -134,7 +291,6 @@ def is_target_gpu(title: str, cfg: dict) -> bool:
         if bad.lower() in t:
             return False
 
-    # Reject 16G variants when both 8G and 16G are mixed into a generic title.
     if re.search(r"\b16\s*g(?:b)?\b|16g(?:b)?", t, re.I):
         return False
     return True
@@ -159,7 +315,6 @@ def parse_smzdm_time(text: str) -> Optional[datetime]:
     text = normalize(text)
     now = now_cn()
 
-    # HH:MM, assume today.
     m = re.search(r"(?<!\d)(\d{1,2}):(\d{2})(?!\d)", text)
     if m and not re.search(r"\d{1,2}-\d{1,2}", text):
         dt = now.replace(
@@ -168,12 +323,10 @@ def parse_smzdm_time(text: str) -> Optional[datetime]:
             second=0,
             microsecond=0,
         )
-        # If parsing just after midnight and page contains late-night item.
         if dt > now + timedelta(minutes=5):
             dt -= timedelta(days=1)
         return dt
 
-    # MM-DD HH:MM
     m = re.search(r"(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})", text)
     if m:
         return datetime(
@@ -188,7 +341,7 @@ def parse_smzdm_time(text: str) -> Optional[datetime]:
 
 
 def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
-    """Use SMZDM's JSON search endpoint first; it is much less brittle than HTML selectors."""
+    """Use SMZDM's JSON search endpoint first; it is less brittle than HTML."""
     out: list[Candidate] = []
     seen: set[str] = set()
     freshness = int(cfg.get("smzdm_fresh_minutes", 180))
@@ -219,7 +372,6 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
         print(f"[smzdm-api] keyword={keyword!r}, rows={len(rows)}")
 
         for row in rows:
-            # SMZDM search can mix articles with deal posts. Channel 2 is commonly the deal/discovery channel.
             channel_id = str(row.get("article_channel_id") or "")
             if channel_id and channel_id != "2":
                 continue
@@ -233,9 +385,23 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                 continue
 
             raw_price = row.get("article_price")
-            price = parse_price(str(raw_price or ""))
-            if price is None:
-                price = parse_price(title)
+            deal_text = normalize(
+                " ".join(
+                    str(row.get(key) or "")
+                    for key in (
+                        "article_title",
+                        "article_subtitle",
+                        "article_content",
+                        "article_tips",
+                        "article_mall",
+                    )
+                )
+            )
+            price, page_price, price_type, discount_info = extract_offer_details(
+                deal_text,
+                raw_price,
+                "API价",
+            )
             if price is None:
                 continue
 
@@ -251,7 +417,9 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                 time_sort = normalize(str(row.get("time_sort") or ""))
                 if time_sort:
                     try:
-                        published = datetime.strptime(time_sort, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN_TZ)
+                        published = datetime.strptime(
+                            time_sort, "%Y-%m-%d %H:%M:%S"
+                        ).replace(tzinfo=CN_TZ)
                     except Exception:
                         published = None
 
@@ -270,6 +438,9 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                     merchant=mall,
                     published_at=published.isoformat() if published else "",
                     reliability="JSON搜索线索",
+                    page_price=page_price,
+                    price_type=price_type,
+                    discount_info=discount_info,
                 )
             )
             seen.add(href)
@@ -278,7 +449,7 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
 
 
 def fetch_smzdm(session: requests.Session, cfg: dict) -> list[Candidate]:
-    """API first; fall back to the public search HTML if the API is blocked or yields nothing."""
+    """API first; fall back to public search HTML if it fails or yields nothing."""
     try:
         out = fetch_smzdm_api(session, cfg)
         if out:
@@ -328,11 +499,12 @@ def fetch_smzdm_html(session: requests.Session, cfg: dict) -> list[Candidate]:
             if not href or href in seen:
                 continue
 
-            price = parse_price(title)
-            if price is None:
-                # Search card description often contains the final price.
-                desc = normalize(row.get_text(" ", strip=True))
-                price = parse_price(desc)
+            full_text = normalize(row.get_text(" ", strip=True))
+            price, page_price, price_type, discount_info = extract_offer_details(
+                full_text,
+                None,
+                "页面价",
+            )
             if price is None:
                 continue
 
@@ -343,7 +515,6 @@ def fetch_smzdm_html(session: requests.Session, cfg: dict) -> list[Candidate]:
             if published and (now_cn() - published) > timedelta(minutes=freshness):
                 continue
 
-            full_text = normalize(row.get_text(" ", strip=True))
             platform = platform_from_text(full_text)
             out.append(
                 Candidate(
@@ -355,6 +526,9 @@ def fetch_smzdm_html(session: requests.Session, cfg: dict) -> list[Candidate]:
                     merchant="",
                     published_at=published.isoformat() if published else "",
                     reliability="新优惠线索",
+                    page_price=page_price,
+                    price_type=price_type,
+                    discount_info=discount_info,
                 )
             )
             seen.add(href)
@@ -398,7 +572,16 @@ def fetch_jd(session: requests.Session, cfg: dict) -> list[Candidate]:
             if not is_target_gpu(title, cfg):
                 continue
 
-            price = parse_price(price_node.get_text(" ", strip=True))
+            listed_price = parse_price(
+                price_node.get_text(" ", strip=True),
+                allow_bare=True,
+            )
+            full_text = normalize(item.get_text(" ", strip=True))
+            price, page_price, price_type, discount_info = extract_offer_details(
+                full_text,
+                listed_price,
+                "页面价",
+            )
             if price is None:
                 continue
 
@@ -423,6 +606,9 @@ def fetch_jd(session: requests.Session, cfg: dict) -> list[Candidate]:
                     merchant=merchant,
                     published_at=now_cn().isoformat(),
                     reliability="商品搜索页实时价",
+                    page_price=page_price,
+                    price_type=price_type,
+                    discount_info=discount_info,
                 )
             )
             seen.add(href)
@@ -431,19 +617,7 @@ def fetch_jd(session: requests.Session, cfg: dict) -> list[Candidate]:
 
 
 def fetch_direct_urls(session: requests.Session, cfg: dict) -> list[Candidate]:
-    """
-    Optional direct URL watcher.
-
-    Each config item may define:
-      {
-        "url": "...",
-        "platform": "京东",
-        "title_regex": "5060.*ti.*8g",
-        "price_regex": "券后...([0-9.]+)"
-      }
-
-    This is intentionally generic because PDD/Taobao/Tmall frequently change HTML.
-    """
+    """Watch optional direct URLs with generic or configured price extraction."""
     out: list[Candidate] = []
     for item in cfg.get("direct_urls", []):
         url = item.get("url", "").strip()
@@ -461,13 +635,18 @@ def fetch_direct_urls(session: requests.Session, cfg: dict) -> list[Candidate]:
             if title_regex and not re.search(title_regex, text, re.I):
                 continue
 
-            price = None
+            price, page_price, price_type, discount_info = extract_offer_details(
+                text,
+                None,
+                "页面价",
+            )
             if item.get("price_regex"):
-                m = re.search(item["price_regex"], text, re.I | re.S)
-                if m:
-                    price = parse_price(m.group(1))
-            if price is None:
-                price = parse_price(text)
+                match = re.search(item["price_regex"], text, re.I | re.S)
+                if match:
+                    configured_price = parse_price(match.group(1), allow_bare=True)
+                    if configured_price is not None:
+                        price = configured_price
+                        price_type = item.get("price_type", "配置价格")
             if price is None:
                 continue
 
@@ -481,6 +660,9 @@ def fetch_direct_urls(session: requests.Session, cfg: dict) -> list[Candidate]:
                     merchant=item.get("merchant", ""),
                     published_at=now_cn().isoformat(),
                     reliability="直链页面价",
+                    page_price=page_price,
+                    price_type=price_type,
+                    discount_info=discount_info,
                 )
             )
         except Exception as e:
@@ -501,7 +683,6 @@ def should_alert(candidate: Candidate, cfg: dict) -> bool:
 
 
 def alert_key(c: Candidate) -> str:
-    # URL is the most stable key. Trim tracking fragments.
     base = c.url.split("#", 1)[0]
     return f"{c.platform}|{base}"
 
@@ -542,11 +723,18 @@ def format_message(c: Candidate, cfg: dict) -> str:
             pass
 
     merchant = f"\n店铺：{c.merchant}" if c.merchant else ""
+    page_price = (
+        f"¥{c.page_price:.0f}" if c.page_price is not None else "未提供"
+    )
+    discount_info = c.discount_info or "未识别（以结算页为准）"
     return (
         "🔥【RTX 5060 Ti 8G 好价】\n"
         f"型号：{c.title}\n"
         f"平台：{c.platform}{merchant}\n"
-        f"当前价：¥{c.price:.0f}\n"
+        f"页面/API价：{page_price}\n"
+        f"最终到手价：¥{c.price:.0f}\n"
+        f"价格类型：{c.price_type or '页面/API价'}\n"
+        f"优惠条件：{discount_info}\n"
         f"提醒线：≤¥{threshold:.0f}\n"
         f"来源：{c.source}（{c.reliability}）"
         f"{age}\n"
@@ -567,7 +755,6 @@ def send_feishu(text: str) -> None:
     resp.raise_for_status()
     try:
         data = resp.json()
-        # Feishu webhook success usually code=0 / StatusCode=0.
         code = data.get("code", data.get("StatusCode", 0))
         if code not in (0, "0", None):
             raise RuntimeError(f"飞书返回异常：{data}")
@@ -613,7 +800,6 @@ def main() -> int:
             errors.append(msg)
             print(msg, file=sys.stderr)
 
-    # Keep exact target products and deduplicate same URL/price.
     uniq: dict[tuple[str, int], Candidate] = {}
     for c in candidates:
         if c.source != "直链监控" and not is_target_gpu(c.title, cfg):
@@ -649,7 +835,6 @@ def main() -> int:
         if hit_count >= int(cfg.get("max_alerts_per_run", 3)):
             break
 
-    # Prevent unbounded state growth.
     keep_days = int(cfg.get("state_retention_days", 30))
     cutoff = now_cn() - timedelta(days=keep_days)
     for key, item in list(state.get("alerts", {}).items()):
@@ -663,7 +848,8 @@ def main() -> int:
     if state_changed:
         save_state(state)
 
-    if errors and len(errors) == len([s for s in sources if cfg.get("sources", {}).get(s[0], True)]):
+    enabled_sources = [s for s in sources if cfg.get("sources", {}).get(s[0], True)]
+    if errors and len(errors) == len(enabled_sources):
         print("WARNING: all enabled sources failed", file=sys.stderr)
         return 2
 
@@ -673,3 +859,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
