@@ -3,11 +3,21 @@
     "RTX 5060 Ti 8G",
     "5060Ti 8G",
     "5060 Ti 8GB",
-    "RTX5060Ti 8G"
+    "RTX5060Ti 8G",
+    "RTX 5060 Ti 16G",
+    "5060Ti 16G",
+    "5060 Ti 16GB",
+    "RTX5060Ti 16G"
   ],
   "thresholds": {
-    "normal": 2999,
-    "good_brand": 3099
+    "8G": {
+      "normal": 2999,
+      "good_brand": 3099
+    },
+    "16G": {
+      "normal": 3599,
+      "good_brand": 3699
+    }
   },
   "good_brands": [
     "微星",
@@ -18,8 +28,6 @@
     "GIGABYTE"
   ],
   "exclude_keywords": [
-    "16G",
-    "16GB",
     "二手",
     "拆机",
     "矿卡",
@@ -32,7 +40,7 @@
   "smzdm_fresh_minutes": 1440,
   "same_price_cooldown_hours": 12,
   "realert_price_drop": 30,
-  "max_alerts_per_run": 3,
+  "max_alerts_per_run": 6,
   "state_retention_days": 30,
   "sources": {
     "smzdm": true,
