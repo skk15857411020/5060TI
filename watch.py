@@ -314,19 +314,30 @@ def extract_offer_details(
     return final_price, page_price, price_type, extract_discount_info(text)
 
 
-def is_target_gpu(title: str, cfg: dict) -> bool:
-    t = title.lower().replace("-", " ").replace("_", " ")
-    if not re.search(r"5060\s*ti", t, re.I):
+def is_target_gpu(text: str, cfg: dict) -> bool:
+    """Match RTX 5060 Ti 8GB using the whole deal text, not only the title."""
+    t = normalize(text).lower().replace("-", " ").replace("_", " ")
+    if not re.search(r"(?:rtx\s*)?5060\s*ti|5060ti", t, re.I):
         return False
-    if not re.search(r"\b8\s*g(?:b)?\b|8g(?:b)?", t, re.I):
+
+    # Reject explicit 16GB variants before accepting any 8GB-looking token.
+    if re.search(r"(?<!\d)16\s*g(?:b)?(?!\d)|\bo16g\b|\b16gb\b", t, re.I):
+        return False
+
+    # Common 8GB forms: 8G / 8GB / O8G / -8G / 显存8G.
+    has_8g = bool(
+        re.search(
+            r"(?<!\d)8\s*g(?:b)?(?!\d)|\bo8g\b|显存\s*8\s*g(?:b)?",
+            t,
+            re.I,
+        )
+    )
+    if not has_8g:
         return False
 
     for bad in cfg.get("exclude_keywords", []):
         if bad.lower() in t:
             return False
-
-    if re.search(r"\b16\s*g(?:b)?\b|16g(?:b)?", t, re.I):
-        return False
     return True
 
 
@@ -440,20 +451,24 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
             if not rows:
                 break
 
+            stats = {
+                "channel": 0,
+                "target": 0,
+                "price": 0,
+                "fresh": 0,
+                "accepted": 0,
+            }
+            allowed_channels = {
+                str(x) for x in cfg.get("smzdm_channel_ids", []) if str(x)
+            }
+
             for row in rows:
                 channel_id = str(row.get("article_channel_id") or "")
-                if channel_id and channel_id != "2":
+                if allowed_channels and channel_id and channel_id not in allowed_channels:
+                    stats["channel"] += 1
                     continue
 
                 title = normalize(str(row.get("article_title") or ""))
-                if not title or not is_target_gpu(title, cfg):
-                    continue
-
-                href = str(row.get("article_url") or "").strip()
-                if not href or href in seen:
-                    continue
-
-                raw_price = row.get("article_price")
                 deal_text = normalize(
                     " ".join(
                         str(row.get(key) or "")
@@ -463,15 +478,26 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                             "article_content",
                             "article_tips",
                             "article_mall",
+                            "article_price",
                         )
                     )
                 )
+                if not title or not is_target_gpu(deal_text, cfg):
+                    stats["target"] += 1
+                    continue
+
+                href = str(row.get("article_url") or "").strip()
+                if not href or href in seen:
+                    continue
+
+                raw_price = row.get("article_price")
                 price, page_price, price_type, discount_info = extract_offer_details(
                     deal_text,
                     raw_price,
                     "API价",
                 )
                 if price is None:
+                    stats["price"] += 1
                     continue
 
                 published = None
@@ -493,6 +519,7 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                             published = None
 
                 if published and (now_cn() - published) > timedelta(minutes=freshness):
+                    stats["fresh"] += 1
                     continue
 
                 mall = normalize(str(row.get("article_mall") or ""))
@@ -513,6 +540,17 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                     )
                 )
                 seen.add(href)
+                stats["accepted"] += 1
+
+            print(
+                "[smzdm-filter] "
+                f"keyword={keyword!r}, page={page + 1}, "
+                f"accepted={stats['accepted']}, "
+                f"target_filtered={stats['target']}, "
+                f"price_filtered={stats['price']}, "
+                f"stale_filtered={stats['fresh']}, "
+                f"channel_filtered={stats['channel']}"
+            )
 
     return out
 
@@ -1076,7 +1114,19 @@ def threshold_for(candidate: Candidate, cfg: dict) -> float:
 
 
 def should_alert(candidate: Candidate, cfg: dict) -> bool:
-    return candidate.price <= threshold_for(candidate, cfg)
+    if candidate.price > threshold_for(candidate, cfg):
+        return False
+
+    # Keep a longer window for chart/history, but do not alert on stale deal posts.
+    if candidate.published_at and candidate.source.startswith("什么值得买"):
+        try:
+            published = datetime.fromisoformat(candidate.published_at)
+            max_age = int(cfg.get("alert_fresh_minutes", 240))
+            if now_cn() - published > timedelta(minutes=max_age):
+                return False
+        except Exception:
+            pass
+    return True
 
 
 def alert_key(c: Candidate) -> str:
