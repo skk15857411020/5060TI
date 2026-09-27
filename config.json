@@ -38,5 +38,6 @@
     "jd": true,
     "direct": true
   },
-  "direct_urls": []
+  "direct_urls": [],
+  "history_retention_days": 30
 }
