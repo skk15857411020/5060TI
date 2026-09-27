@@ -209,6 +209,33 @@ def parse_price(text: str, *, allow_bare: bool = True) -> Optional[float]:
     return None
 
 
+def extract_page_price(text: str) -> Optional[float]:
+    """Extract a displayed/base price without re-labelling a final price as page price."""
+    if not text:
+        return None
+    t = normalize(text).replace(",", "")
+    blocked = _blocked_price_spans(t)
+
+    for _, label in FINAL_PRICE_RULES:
+        contextual_patterns = [
+            rf"{label}[^\d¥￥]{{0,12}}[¥￥]?\s*{PRICE_NUMBER}\s*(?:元)?",
+            rf"[¥￥]?\s*{PRICE_NUMBER}\s*(?:元)?[^\d]{{0,8}}{label}",
+        ]
+        for pattern in contextual_patterns:
+            blocked.extend(match.span(1) for match in re.finditer(pattern, t, re.I))
+
+    patterns = [
+        rf"(?:页面价|活动价|原价|售价|标价|现价|京东价|商品价)[^\d]{{0,10}}[¥￥]?\s*{PRICE_NUMBER}",
+        rf"[¥￥]\s*{PRICE_NUMBER}",
+        rf"(?<!\d){PRICE_NUMBER}\s*元(?!券)",
+    ]
+    for pattern in patterns:
+        value = _first_usable_price(t, pattern, blocked)
+        if value is not None:
+            return value
+    return None
+
+
 def extract_discount_info(text: str) -> str:
     """Extract concise, de-duplicated discount conditions for notifications."""
     t = normalize(text).replace(",", "")
@@ -270,8 +297,7 @@ def extract_offer_details(
     page_price = parse_price(str(api_price or ""), allow_bare=True)
 
     if page_price is None:
-        # Generic page extraction is deliberately not allowed to use bare numbers.
-        page_price = parse_price(text, allow_bare=False)
+        page_price = extract_page_price(text)
 
     if final_price is None:
         final_price = page_price
