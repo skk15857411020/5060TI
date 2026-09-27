@@ -14,6 +14,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: rtx-5060ti-price-watch
@@ -36,6 +37,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Restore latest 5-minute price history
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p data
+          artifact_id=$(gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts?name=price-history&per_page=20"             --jq '.artifacts | map(select(.expired == false)) | sort_by(.created_at) | reverse | .[0].id // empty')
+          if [ -n "$artifact_id" ]; then
+            gh api "repos/${GITHUB_REPOSITORY}/actions/artifacts/$artifact_id/zip" > /tmp/price-history.zip
+            unzip -o /tmp/price-history.zip -d data
+            echo "Restored previous price history artifact: $artifact_id"
+          else
+            echo "No previous price history artifact found; starting fresh."
+          fi
+
       - name: Check price and notify
         env:
           FEISHU_WEBHOOK: ${{ secrets.FEISHU_WEBHOOK }}
@@ -44,14 +59,30 @@ jobs:
           TEST_NOTIFY: ${{ github.event_name == 'workflow_dispatch' && inputs.test_notify && '1' || '0' }}
         run: python watch.py
 
+      - name: Save 5-minute price history artifact
+        if: always() && hashFiles('data/price_history.csv') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: price-history
+          path: data/price_history.csv
+          retention-days: 35
+          compression-level: 9
 
-      - name: Persist alert state
+      - name: Persist state and public trend files
         if: always()
         run: |
-          if [ -f .watch_state.json ] && ! git diff --quiet -- .watch_state.json; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add .watch_state.json
-            git commit -m "chore: update price-watch alert state"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          files=()
+          [ -f .watch_state.json ] && files+=(.watch_state.json)
+          [ -d docs ] && files+=(docs)
+
+          if [ ${#files[@]} -gt 0 ]; then
+            git add "${files[@]}"
+          fi
+
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update price history and trend"
             git push
           fi
