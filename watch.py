@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import csv
+import html
 import json
+import math
 import os
 import re
 import sys
@@ -20,6 +23,11 @@ from urllib3.util.retry import Retry
 BASE_DIR = Path(__file__).resolve().parent
 CONFIG_PATH = BASE_DIR / "config.json"
 STATE_PATH = BASE_DIR / ".watch_state.json"
+HISTORY_PATH = BASE_DIR / "data" / "price_history.csv"
+DOCS_DIR = BASE_DIR / "docs"
+HOURLY_PATH = DOCS_DIR / "hourly_min.csv"
+CHART_PATH = DOCS_DIR / "price_chart.svg"
+INDEX_PATH = DOCS_DIR / "index.html"
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -696,6 +704,334 @@ def fetch_direct_urls(session: requests.Session, cfg: dict) -> list[Candidate]:
     return out
 
 
+
+def _read_history_rows() -> list[dict]:
+    if not HISTORY_PATH.exists():
+        return []
+    try:
+        with HISTORY_PATH.open("r", encoding="utf-8", newline="") as f:
+            return list(csv.DictReader(f))
+    except Exception as e:
+        print(f"[history] read failed: {e}", file=sys.stderr)
+        return []
+
+
+def _write_csv(path: Path, fieldnames: list[str], rows: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(rows)
+    tmp.replace(path)
+
+
+def record_price_history(candidates: list[Candidate], keep_days: int = 30) -> list[dict]:
+    """Persist the lowest observed price per platform for every 5-minute sampling run."""
+    rows = _read_history_rows()
+    cutoff = now_cn() - timedelta(days=max(1, keep_days))
+    kept: list[dict] = []
+
+    for row in rows:
+        try:
+            dt = datetime.fromisoformat(row.get("sampled_at", ""))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=CN_TZ)
+            if dt >= cutoff:
+                kept.append(row)
+        except Exception:
+            continue
+
+    best_by_platform: dict[str, Candidate] = {}
+    for c in candidates:
+        platform = c.platform or "未知平台"
+        prev = best_by_platform.get(platform)
+        if prev is None or c.price < prev.price:
+            best_by_platform[platform] = c
+
+    sampled_at = now_cn().replace(second=0, microsecond=0).isoformat()
+    if best_by_platform:
+        platforms = set(best_by_platform)
+        kept = [
+            row
+            for row in kept
+            if not (
+                row.get("sampled_at") == sampled_at
+                and row.get("platform") in platforms
+            )
+        ]
+
+    for platform, c in sorted(best_by_platform.items()):
+        kept.append(
+            {
+                "sampled_at": sampled_at,
+                "platform": platform,
+                "price": f"{c.price:.2f}",
+                "page_price": (
+                    f"{c.page_price:.2f}" if c.page_price is not None else ""
+                ),
+                "price_type": c.price_type,
+                "title": c.title,
+                "source": c.source,
+                "merchant": c.merchant,
+                "url": c.url,
+            }
+        )
+
+    kept.sort(key=lambda r: (r.get("sampled_at", ""), r.get("platform", "")))
+    _write_csv(
+        HISTORY_PATH,
+        [
+            "sampled_at",
+            "platform",
+            "price",
+            "page_price",
+            "price_type",
+            "title",
+            "source",
+            "merchant",
+            "url",
+        ],
+        kept,
+    )
+    print(
+        f"[history] samples={len(kept)}, platforms_this_run={len(best_by_platform)}"
+    )
+    return kept
+
+
+def build_hourly_min(history_rows: list[dict]) -> list[dict]:
+    """Aggregate 5-minute samples into one minimum-price point per platform per hour."""
+    grouped: dict[tuple[str, str], dict] = {}
+
+    for row in history_rows:
+        try:
+            dt = datetime.fromisoformat(row.get("sampled_at", ""))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=CN_TZ)
+            hour = dt.replace(minute=0, second=0, microsecond=0).isoformat()
+            platform = row.get("platform") or "未知平台"
+            price = float(row.get("price", ""))
+        except Exception:
+            continue
+
+        key = (hour, platform)
+        prev = grouped.get(key)
+        if prev is None or price < float(prev["price"]):
+            grouped[key] = {
+                "hour": hour,
+                "platform": platform,
+                "price": f"{price:.2f}",
+                "title": row.get("title", ""),
+                "source": row.get("source", ""),
+                "url": row.get("url", ""),
+            }
+
+    rows = [grouped[key] for key in sorted(grouped)]
+    _write_csv(
+        HOURLY_PATH,
+        ["hour", "platform", "price", "title", "source", "url"],
+        rows,
+    )
+    return rows
+
+
+def _platform_display_name(name: str) -> str:
+    return {
+        "京东": "JD",
+        "拼多多": "PDD",
+        "淘宝": "Taobao",
+        "天猫": "Tmall",
+        "抖音": "Douyin",
+        "未知平台": "Other",
+    }.get(name, name)
+
+
+def write_price_chart_svg(hourly_rows: list[dict]) -> None:
+    """Generate a dependency-free SVG trend chart from hourly minimum prices."""
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    width, height = 1200, 620
+    left, right, top, bottom = 92, 38, 76, 78
+    plot_w = width - left - right
+    plot_h = height - top - bottom
+
+    parsed: list[tuple[datetime, str, float]] = []
+    for row in hourly_rows:
+        try:
+            dt = datetime.fromisoformat(row["hour"])
+            parsed.append((dt, row["platform"], float(row["price"])))
+        except Exception:
+            continue
+
+    if not parsed:
+        svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
+<rect width="100%" height="100%" fill="white"/>
+<text x="{width/2}" y="{height/2}" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" fill="#555">RTX 5060 Ti 8G price trend — waiting for samples</text>
+</svg>"""
+        CHART_PATH.write_text(svg, encoding="utf-8")
+        return
+
+    times = [x[0].timestamp() for x in parsed]
+    prices = [x[2] for x in parsed]
+    min_t, max_t = min(times), max(times)
+    min_p, max_p = min(prices), max(prices)
+
+    y_low = max(0.0, math.floor((min_p - 100) / 100) * 100)
+    y_high = math.ceil((max_p + 100) / 100) * 100
+    if y_high <= y_low:
+        y_high = y_low + 200
+
+    def sx(ts: float) -> float:
+        if max_t == min_t:
+            return left + plot_w / 2
+        return left + (ts - min_t) / (max_t - min_t) * plot_w
+
+    def sy(price: float) -> float:
+        return top + (y_high - price) / (y_high - y_low) * plot_h
+
+    colors = ["#2563eb", "#16a34a", "#dc2626", "#9333ea", "#ea580c", "#0891b2"]
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        '<rect width="100%" height="100%" fill="white"/>',
+        '<text x="60" y="38" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#111827">RTX 5060 Ti 8G — 30 Day Price Trend</text>',
+        '<text x="60" y="61" font-family="Arial, sans-serif" font-size="14" fill="#6b7280">5-minute checks, charted as hourly minimum price</text>',
+    ]
+
+    for i in range(6):
+        value = y_low + (y_high - y_low) * i / 5
+        y = sy(value)
+        parts.append(
+            f'<line x1="{left}" y1="{y:.1f}" x2="{width-right}" y2="{y:.1f}" stroke="#e5e7eb" stroke-width="1"/>'
+        )
+        parts.append(
+            f'<text x="{left-12}" y="{y+5:.1f}" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥{value:.0f}</text>'
+        )
+
+    parts.append(
+        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height-bottom}" stroke="#9ca3af" stroke-width="1"/>'
+    )
+    parts.append(
+        f'<line x1="{left}" y1="{height-bottom}" x2="{width-right}" y2="{height-bottom}" stroke="#9ca3af" stroke-width="1"/>'
+    )
+
+    tick_count = min(6, max(2, len(set(times))))
+    for i in range(tick_count):
+        ts = min_t if tick_count == 1 else min_t + (max_t - min_t) * i / (tick_count - 1)
+        x = sx(ts)
+        label = datetime.fromtimestamp(ts, CN_TZ).strftime("%m-%d")
+        parts.append(
+            f'<text x="{x:.1f}" y="{height-bottom+28}" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">{label}</text>'
+        )
+
+    platforms = sorted({x[1] for x in parsed})
+    legend_x = 620
+    for idx, platform in enumerate(platforms):
+        color = colors[idx % len(colors)]
+        rows = sorted(
+            [(dt, price) for dt, p, price in parsed if p == platform],
+            key=lambda x: x[0],
+        )
+        pts = " ".join(
+            f"{sx(dt.timestamp()):.1f},{sy(price):.1f}" for dt, price in rows
+        )
+        if len(rows) >= 2:
+            parts.append(
+                f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>'
+            )
+        elif rows:
+            x = sx(rows[0][0].timestamp())
+            y = sy(rows[0][1])
+            parts.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="4" fill="{color}"/>')
+
+        lx = legend_x + (idx % 4) * 130
+        ly = 35 + (idx // 4) * 24
+        parts.append(
+            f'<line x1="{lx}" y1="{ly}" x2="{lx+24}" y2="{ly}" stroke="{color}" stroke-width="3"/>'
+        )
+        parts.append(
+            f'<text x="{lx+31}" y="{ly+5}" font-family="Arial, sans-serif" font-size="13" fill="#374151">{html.escape(_platform_display_name(platform))}</text>'
+        )
+
+    parts.append(
+        f'<text x="{width/2}" y="{height-18}" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>'
+    )
+    parts.append("</svg>")
+    CHART_PATH.write_text("\n".join(parts), encoding="utf-8")
+
+
+def write_dashboard(hourly_rows: list[dict]) -> None:
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if hourly_rows:
+        latest_hour = max(row["hour"] for row in hourly_rows)
+        latest = sorted(
+            [row for row in hourly_rows if row["hour"] == latest_hour],
+            key=lambda r: float(r["price"]),
+        )
+        overall = min(hourly_rows, key=lambda r: float(r["price"]))
+        latest_label = datetime.fromisoformat(latest_hour).strftime("%Y-%m-%d %H:00")
+        rows_html = "\n".join(
+            "<tr>"
+            f"<td>{html.escape(row['platform'])}</td>"
+            f"<td>¥{float(row['price']):.0f}</td>"
+            f"<td>{html.escape(row.get('title',''))}</td>"
+            f"<td><a href=\"{html.escape(row.get('url',''), quote=True)}\">查看</a></td>"
+            "</tr>"
+            for row in latest
+        )
+        min_text = (
+            f"¥{float(overall['price']):.0f} · "
+            f"{html.escape(overall['platform'])} · "
+            f"{datetime.fromisoformat(overall['hour']).strftime('%Y-%m-%d %H:00')}"
+        )
+    else:
+        latest_label = "等待首批数据"
+        rows_html = '<tr><td colspan="4">暂无价格数据</td></tr>'
+        min_text = "暂无"
+
+    page = f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RTX 5060 Ti 8G 价格走势</title>
+<style>
+body{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;margin:0;background:#f5f7fb;color:#111827}}
+main{{max-width:1180px;margin:32px auto;padding:0 18px}}
+.card{{background:white;border-radius:16px;padding:22px;margin-bottom:18px;box-shadow:0 6px 24px rgba(0,0,0,.06)}}
+h1{{margin:0 0 8px}} .muted{{color:#6b7280}}
+img{{width:100%;height:auto;display:block}}
+table{{width:100%;border-collapse:collapse}} th,td{{padding:10px;border-bottom:1px solid #e5e7eb;text-align:left;vertical-align:top}}
+a{{color:#2563eb;text-decoration:none}}
+.metric{{font-size:28px;font-weight:700}}
+</style>
+</head>
+<body>
+<main>
+<div class="card">
+<h1>RTX 5060 Ti 8G 价格走势</h1>
+<div class="muted">每 5 分钟采集一次；走势图使用每个平台每小时最低价。原始 5 分钟数据保存在 GitHub Actions artifact 中。</div>
+</div>
+<div class="card"><img src="price_chart.svg" alt="30天价格走势图"></div>
+<div class="card">
+<div class="muted">近30天最低</div>
+<div class="metric">{min_text}</div>
+</div>
+<div class="card">
+<h2>最近一小时最低价</h2>
+<div class="muted">{latest_label}（北京时间）</div>
+<table>
+<thead><tr><th>平台</th><th>最低价</th><th>商品</th><th>链接</th></tr></thead>
+<tbody>{rows_html}</tbody>
+</table>
+<p><a href="hourly_min.csv">下载小时聚合 CSV</a></p>
+</div>
+</main>
+</body>
+</html>"""
+    INDEX_PATH.write_text(page, encoding="utf-8")
+
+
 def threshold_for(candidate: Candidate, cfg: dict) -> float:
     t = candidate.title.lower()
     for brand in cfg.get("good_brands", []):
@@ -833,6 +1169,14 @@ def main() -> int:
         uniq[(c.url, int(c.price * 100))] = c
     candidates = list(uniq.values())
     candidates.sort(key=lambda x: x.price)
+
+    history_rows = record_price_history(
+        candidates,
+        int(cfg.get("history_retention_days", 30)),
+    )
+    hourly_rows = build_hourly_min(history_rows)
+    write_price_chart_svg(hourly_rows)
+    write_dashboard(hourly_rows)
 
     hit_count = 0
     state_changed = False
