@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620">
 <rect width="100%" height="100%" fill="white"/>
-<text x="60" y="38" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#111827">RTX 5060 Ti 8G — 30 Day Price Trend</text>
+<text x="60" y="38" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#111827">RTX 5060 Ti 8G / 16G — 30 Day Price Trend</text>
 <text x="60" y="61" font-family="Arial, sans-serif" font-size="14" fill="#6b7280">5-minute checks, charted as hourly minimum price</text>
 <line x1="92" y1="542.0" x2="1162" y2="542.0" stroke="#e5e7eb" stroke-width="1"/>
 <text x="80" y="547.0" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥3600</text>
@@ -23,6 +23,6 @@
 <text x="1162.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-27</text>
 <polyline points="92.0,118.8 359.5,457.7 627.0,457.7 894.5,457.7 1162.0,457.7" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="35" x2="644" y2="35" stroke="#2563eb" stroke-width="3"/>
-<text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">JD</text>
+<text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G JD</text>
 <text x="600.0" y="602" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>
 </svg>
