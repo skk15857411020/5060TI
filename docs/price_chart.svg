@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620">
+<rect width="100%" height="100%" fill="white"/>
+<text x="60" y="38" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#111827">RTX 5060 Ti 8G — 30 Day Price Trend</text>
+<text x="60" y="61" font-family="Arial, sans-serif" font-size="14" fill="#6b7280">5-minute checks, charted as hourly minimum price</text>
+<line x1="92" y1="542.0" x2="1162" y2="542.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="80" y="547.0" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4400</text>
+<line x1="92" y1="448.8" x2="1162" y2="448.8" stroke="#e5e7eb" stroke-width="1"/>
+<text x="80" y="453.8" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4460</text>
+<line x1="92" y1="355.6" x2="1162" y2="355.6" stroke="#e5e7eb" stroke-width="1"/>
+<text x="80" y="360.6" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4520</text>
+<line x1="92" y1="262.4" x2="1162" y2="262.4" stroke="#e5e7eb" stroke-width="1"/>
+<text x="80" y="267.4" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4580</text>
+<line x1="92" y1="169.2" x2="1162" y2="169.2" stroke="#e5e7eb" stroke-width="1"/>
+<text x="80" y="174.2" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4640</text>
+<line x1="92" y1="76.0" x2="1162" y2="76.0" stroke="#e5e7eb" stroke-width="1"/>
+<text x="80" y="81.0" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4700</text>
+<line x1="92" y1="76" x2="92" y2="542" stroke="#9ca3af" stroke-width="1"/>
+<line x1="92" y1="542" x2="1162" y2="542" stroke="#9ca3af" stroke-width="1"/>
+<text x="627.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-27</text>
+<text x="627.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-27</text>
+<circle cx="627.0" cy="232.9" r="4" fill="#2563eb"/>
+<line x1="620" y1="35" x2="644" y2="35" stroke="#2563eb" stroke-width="3"/>
+<text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">JD</text>
+<text x="600.0" y="602" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>
+</svg>
