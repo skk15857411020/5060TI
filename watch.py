@@ -374,6 +374,31 @@ def parse_smzdm_time(text: str) -> Optional[datetime]:
     return None
 
 
+def build_search_queries(cfg: dict) -> list[str]:
+    """Expand base GPU queries with marketplace names to surface more non-JD deals."""
+    bases = [normalize(str(x)) for x in cfg.get("search_keywords", []) if normalize(str(x))]
+    markets = [normalize(str(x)) for x in cfg.get("marketplaces", []) if normalize(str(x))]
+    queries: list[str] = []
+    seen: set[str] = set()
+
+    for q in bases:
+        if q not in seen:
+            queries.append(q)
+            seen.add(q)
+
+    # Use the two shortest/base-like forms for platform-targeted searches to avoid
+    # exploding request count while still surfacing PDD/Taobao/Tmall/Douyin deals.
+    seed_bases = bases[:2] or ["RTX 5060 Ti 8G"]
+    for market in markets:
+        for base in seed_bases:
+            q = f"{base} {market}"
+            if q not in seen:
+                queries.append(q)
+                seen.add(q)
+
+    return queries
+
+
 def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
     """Use SMZDM's JSON search endpoint first; it is less brittle than HTML."""
     out: list[Candidate] = []
@@ -385,99 +410,109 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
         "Accept": "application/json,text/plain,*/*",
     }
 
-    for keyword in cfg.get("search_keywords", []):
-        r = session.get(
-            "https://api.smzdm.com/v1/list",
-            params={
-                "keyword": keyword,
-                "category_id": "",
-                "brand_id": "",
-                "mall_id": "",
-                "order": "time",
-                "limit": 30,
-                "offset": 0,
-            },
-            headers=headers,
-            timeout=20,
-        )
-        r.raise_for_status()
-        data = r.json()
-        rows = ((data or {}).get("data") or {}).get("rows") or []
-        print(f"[smzdm-api] keyword={keyword!r}, rows={len(rows)}")
+    page_size = max(10, min(int(cfg.get("smzdm_page_size", 30)), 100))
+    pages = max(1, min(int(cfg.get("smzdm_pages", 3)), 5))
 
-        for row in rows:
-            channel_id = str(row.get("article_channel_id") or "")
-            if channel_id and channel_id != "2":
-                continue
+    for keyword in build_search_queries(cfg):
+        for page in range(pages):
+            offset = page * page_size
+            r = session.get(
+                "https://api.smzdm.com/v1/list",
+                params={
+                    "keyword": keyword,
+                    "category_id": "",
+                    "brand_id": "",
+                    "mall_id": "",
+                    "order": "time",
+                    "limit": page_size,
+                    "offset": offset,
+                },
+                headers=headers,
+                timeout=20,
+            )
+            r.raise_for_status()
+            data = r.json()
+            rows = ((data or {}).get("data") or {}).get("rows") or []
+            print(
+                f"[smzdm-api] keyword={keyword!r}, page={page + 1}/{pages}, "
+                f"offset={offset}, rows={len(rows)}"
+            )
+            if not rows:
+                break
 
-            title = normalize(str(row.get("article_title") or ""))
-            if not title or not is_target_gpu(title, cfg):
-                continue
+            for row in rows:
+                channel_id = str(row.get("article_channel_id") or "")
+                if channel_id and channel_id != "2":
+                    continue
 
-            href = str(row.get("article_url") or "").strip()
-            if not href or href in seen:
-                continue
+                title = normalize(str(row.get("article_title") or ""))
+                if not title or not is_target_gpu(title, cfg):
+                    continue
 
-            raw_price = row.get("article_price")
-            deal_text = normalize(
-                " ".join(
-                    str(row.get(key) or "")
-                    for key in (
-                        "article_title",
-                        "article_subtitle",
-                        "article_content",
-                        "article_tips",
-                        "article_mall",
+                href = str(row.get("article_url") or "").strip()
+                if not href or href in seen:
+                    continue
+
+                raw_price = row.get("article_price")
+                deal_text = normalize(
+                    " ".join(
+                        str(row.get(key) or "")
+                        for key in (
+                            "article_title",
+                            "article_subtitle",
+                            "article_content",
+                            "article_tips",
+                            "article_mall",
+                        )
                     )
                 )
-            )
-            price, page_price, price_type, discount_info = extract_offer_details(
-                deal_text,
-                raw_price,
-                "API价",
-            )
-            if price is None:
-                continue
-
-            published = None
-            raw_ts = row.get("publish_date_lt")
-            try:
-                if raw_ts not in (None, ""):
-                    published = datetime.fromtimestamp(int(float(raw_ts)), CN_TZ)
-            except Exception:
-                published = None
-
-            if published is None:
-                time_sort = normalize(str(row.get("time_sort") or ""))
-                if time_sort:
-                    try:
-                        published = datetime.strptime(
-                            time_sort, "%Y-%m-%d %H:%M:%S"
-                        ).replace(tzinfo=CN_TZ)
-                    except Exception:
-                        published = None
-
-            if published and (now_cn() - published) > timedelta(minutes=freshness):
-                continue
-
-            mall = normalize(str(row.get("article_mall") or ""))
-            platform = platform_from_text(mall + " " + title + " " + href)
-            out.append(
-                Candidate(
-                    source="什么值得买API",
-                    platform=platform,
-                    title=title,
-                    price=price,
-                    url=href,
-                    merchant=mall,
-                    published_at=published.isoformat() if published else "",
-                    reliability="JSON搜索线索",
-                    page_price=page_price,
-                    price_type=price_type,
-                    discount_info=discount_info,
+                price, page_price, price_type, discount_info = extract_offer_details(
+                    deal_text,
+                    raw_price,
+                    "API价",
                 )
-            )
-            seen.add(href)
+                if price is None:
+                    continue
+
+                published = None
+                raw_ts = row.get("publish_date_lt")
+                try:
+                    if raw_ts not in (None, ""):
+                        published = datetime.fromtimestamp(int(float(raw_ts)), CN_TZ)
+                except Exception:
+                    published = None
+
+                if published is None:
+                    time_sort = normalize(str(row.get("time_sort") or ""))
+                    if time_sort:
+                        try:
+                            published = datetime.strptime(
+                                time_sort, "%Y-%m-%d %H:%M:%S"
+                            ).replace(tzinfo=CN_TZ)
+                        except Exception:
+                            published = None
+
+                if published and (now_cn() - published) > timedelta(minutes=freshness):
+                    continue
+
+                mall = normalize(str(row.get("article_mall") or ""))
+                platform = platform_from_text(mall + " " + title + " " + href)
+                out.append(
+                    Candidate(
+                        source="什么值得买API",
+                        platform=platform,
+                        title=title,
+                        price=price,
+                        url=href,
+                        merchant=mall,
+                        published_at=published.isoformat() if published else "",
+                        reliability="JSON搜索线索",
+                        page_price=page_price,
+                        price_type=price_type,
+                        discount_info=discount_info,
+                    )
+                )
+                seen.add(href)
 
     return out
 
