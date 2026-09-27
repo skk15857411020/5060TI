@@ -29,7 +29,7 @@
     "散热器",
     "水冷头"
   ],
-  "smzdm_fresh_minutes": 180,
+  "smzdm_fresh_minutes": 1440,
   "same_price_cooldown_hours": 12,
   "realert_price_drop": 30,
   "max_alerts_per_run": 3,
@@ -49,5 +49,7 @@
     "抖音"
   ],
   "smzdm_pages": 3,
-  "smzdm_page_size": 30
+  "smzdm_page_size": 30,
+  "alert_fresh_minutes": 240,
+  "smzdm_channel_ids": []
 }
