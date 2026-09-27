@@ -1,4 +1,4 @@
-name: RTX 5060 Ti 8G Price Watch
+name: RTX 5060 Ti 8G + 16G Price Watch
 
 on:
   schedule:
