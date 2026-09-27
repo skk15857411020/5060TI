@@ -187,7 +187,109 @@ def parse_smzdm_time(text: str) -> Optional[datetime]:
     return None
 
 
+def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
+    """Use SMZDM's JSON search endpoint first; it is much less brittle than HTML selectors."""
+    out: list[Candidate] = []
+    seen: set[str] = set()
+    freshness = int(cfg.get("smzdm_fresh_minutes", 180))
+    headers = {
+        "User-Agent": UA,
+        "Referer": "https://search.smzdm.com/",
+        "Accept": "application/json,text/plain,*/*",
+    }
+
+    for keyword in cfg.get("search_keywords", []):
+        r = session.get(
+            "https://api.smzdm.com/v1/list",
+            params={
+                "keyword": keyword,
+                "category_id": "",
+                "brand_id": "",
+                "mall_id": "",
+                "order": "time",
+                "limit": 30,
+                "offset": 0,
+            },
+            headers=headers,
+            timeout=20,
+        )
+        r.raise_for_status()
+        data = r.json()
+        rows = ((data or {}).get("data") or {}).get("rows") or []
+        print(f"[smzdm-api] keyword={keyword!r}, rows={len(rows)}")
+
+        for row in rows:
+            # SMZDM search can mix articles with deal posts. Channel 2 is commonly the deal/discovery channel.
+            channel_id = str(row.get("article_channel_id") or "")
+            if channel_id and channel_id != "2":
+                continue
+
+            title = normalize(str(row.get("article_title") or ""))
+            if not title or not is_target_gpu(title, cfg):
+                continue
+
+            href = str(row.get("article_url") or "").strip()
+            if not href or href in seen:
+                continue
+
+            raw_price = row.get("article_price")
+            price = parse_price(str(raw_price or ""))
+            if price is None:
+                price = parse_price(title)
+            if price is None:
+                continue
+
+            published = None
+            raw_ts = row.get("publish_date_lt")
+            try:
+                if raw_ts not in (None, ""):
+                    published = datetime.fromtimestamp(int(float(raw_ts)), CN_TZ)
+            except Exception:
+                published = None
+
+            if published is None:
+                time_sort = normalize(str(row.get("time_sort") or ""))
+                if time_sort:
+                    try:
+                        published = datetime.strptime(time_sort, "%Y-%m-%d %H:%M:%S").replace(tzinfo=CN_TZ)
+                    except Exception:
+                        published = None
+
+            if published and (now_cn() - published) > timedelta(minutes=freshness):
+                continue
+
+            mall = normalize(str(row.get("article_mall") or ""))
+            platform = platform_from_text(mall + " " + title + " " + href)
+            out.append(
+                Candidate(
+                    source="什么值得买API",
+                    platform=platform,
+                    title=title,
+                    price=price,
+                    url=href,
+                    merchant=mall,
+                    published_at=published.isoformat() if published else "",
+                    reliability="JSON搜索线索",
+                )
+            )
+            seen.add(href)
+
+    return out
+
+
 def fetch_smzdm(session: requests.Session, cfg: dict) -> list[Candidate]:
+    """API first; fall back to the public search HTML if the API is blocked or yields nothing."""
+    try:
+        out = fetch_smzdm_api(session, cfg)
+        if out:
+            return out
+    except Exception as e:
+        print(f"[smzdm-api] failed: {e}", file=sys.stderr)
+
+    return fetch_smzdm_html(session, cfg)
+
+
+def fetch_smzdm_html(session: requests.Session, cfg: dict) -> list[Candidate]:
     cookie = os.getenv("SMZDM_COOKIE", "").strip()
     headers = {
         "Referer": "https://search.smzdm.com/",
@@ -245,7 +347,7 @@ def fetch_smzdm(session: requests.Session, cfg: dict) -> list[Candidate]:
             platform = platform_from_text(full_text)
             out.append(
                 Candidate(
-                    source="什么值得买",
+                    source="什么值得买HTML",
                     platform=platform,
                     title=title,
                     price=price,
