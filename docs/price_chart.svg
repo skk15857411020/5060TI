@@ -3,15 +3,15 @@
 <text x="60" y="38" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#111827">RTX 5060 Ti 8G / 16G — 30 Day Price Trend</text>
 <text x="60" y="61" font-family="Arial, sans-serif" font-size="14" fill="#6b7280">5-minute checks, charted as hourly minimum price</text>
 <line x1="92" y1="542.0" x2="1162" y2="542.0" stroke="#e5e7eb" stroke-width="1"/>
-<text x="80" y="547.0" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥3600</text>
+<text x="80" y="547.0" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥2700</text>
 <line x1="92" y1="448.8" x2="1162" y2="448.8" stroke="#e5e7eb" stroke-width="1"/>
-<text x="80" y="453.8" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4300</text>
+<text x="80" y="453.8" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥3580</text>
 <line x1="92" y1="355.6" x2="1162" y2="355.6" stroke="#e5e7eb" stroke-width="1"/>
-<text x="80" y="360.6" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥5000</text>
+<text x="80" y="360.6" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥4460</text>
 <line x1="92" y1="262.4" x2="1162" y2="262.4" stroke="#e5e7eb" stroke-width="1"/>
-<text x="80" y="267.4" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥5700</text>
+<text x="80" y="267.4" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥5340</text>
 <line x1="92" y1="169.2" x2="1162" y2="169.2" stroke="#e5e7eb" stroke-width="1"/>
-<text x="80" y="174.2" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥6400</text>
+<text x="80" y="174.2" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥6220</text>
 <line x1="92" y1="76.0" x2="1162" y2="76.0" stroke="#e5e7eb" stroke-width="1"/>
 <text x="80" y="81.0" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥7100</text>
 <line x1="92" y1="76" x2="92" y2="542" stroke="#9ca3af" stroke-width="1"/>
@@ -22,11 +22,14 @@
 <text x="734.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-28</text>
 <text x="948.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-28</text>
 <text x="1162.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-28</text>
-<polyline points="389.2,101.5 448.7,101.5 508.1,101.5 567.6,101.5 627.0,101.5 686.4,101.5 745.9,101.5 805.3,101.5 864.8,101.5 924.2,101.5 983.7,101.5 1043.1,101.5 1102.6,101.5 1162.0,101.5" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="389.2,96.3 448.7,96.3 508.1,96.3 567.6,96.3 627.0,96.3 686.4,96.3 745.9,96.3 805.3,96.3 864.8,96.3 924.2,96.3 983.7,96.3 1043.1,96.3 1102.6,96.3 1162.0,96.3" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="35" x2="644" y2="35" stroke="#2563eb" stroke-width="3"/>
 <text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G JD</text>
-<polyline points="92.0,409.0 151.4,515.5 210.9,515.5 270.3,515.5 329.8,515.5 389.2,515.5 448.7,515.5 508.1,515.5 567.6,515.5 627.0,409.0 686.4,409.0 745.9,409.0 805.3,409.0 864.8,409.0 924.2,409.0 983.7,409.0 1043.1,409.0 1102.6,409.0 1162.0,409.0" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,340.9 151.4,425.6 210.9,425.6 270.3,425.6 329.8,425.6 389.2,425.6 448.7,425.6 508.1,425.6 567.6,425.6 627.0,340.9 686.4,340.9 745.9,340.9 805.3,340.9 864.8,340.9 924.2,340.9 983.7,340.9 1043.1,340.9 1102.6,340.9 1162.0,340.9" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="750" y1="35" x2="774" y2="35" stroke="#16a34a" stroke-width="3"/>
 <text x="781" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G JD</text>
+<circle cx="1162.0" cy="520.9" r="4" fill="#dc2626"/>
+<line x1="880" y1="35" x2="904" y2="35" stroke="#dc2626" stroke-width="3"/>
+<text x="911" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G Tmall</text>
 <text x="600.0" y="602" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>
 </svg>
