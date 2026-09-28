@@ -22,13 +22,13 @@
 <text x="734.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-28</text>
 <text x="948.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-28</text>
 <text x="1162.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">09-28</text>
-<polyline points="389.2,96.3 448.7,96.3 508.1,96.3 567.6,96.3 627.0,96.3 686.4,96.3 745.9,96.3 805.3,96.3 864.8,96.3 924.2,96.3 983.7,96.3 1043.1,96.3 1102.6,96.3 1162.0,96.3" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="373.6,96.3 429.9,96.3 486.2,96.3 542.5,96.3 598.8,96.3 655.2,96.3 711.5,96.3 767.8,96.3 824.1,96.3 880.4,96.3 936.7,96.3 993.1,96.3 1049.4,96.3 1105.7,96.3 1162.0,96.3" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="35" x2="644" y2="35" stroke="#2563eb" stroke-width="3"/>
 <text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G JD</text>
-<polyline points="92.0,340.9 151.4,425.6 210.9,425.6 270.3,425.6 329.8,425.6 389.2,425.6 448.7,425.6 508.1,425.6 567.6,425.6 627.0,340.9 686.4,340.9 745.9,340.9 805.3,340.9 864.8,340.9 924.2,340.9 983.7,340.9 1043.1,340.9 1102.6,340.9 1162.0,340.9" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,340.9 148.3,425.6 204.6,425.6 260.9,425.6 317.3,425.6 373.6,425.6 429.9,425.6 486.2,425.6 542.5,425.6 598.8,340.9 655.2,340.9 711.5,340.9 767.8,340.9 824.1,340.9 880.4,340.9 936.7,340.9 993.1,340.9 1049.4,340.9 1105.7,340.9 1162.0,340.9" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="750" y1="35" x2="774" y2="35" stroke="#16a34a" stroke-width="3"/>
 <text x="781" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G JD</text>
-<circle cx="1162.0" cy="520.9" r="4" fill="#dc2626"/>
+<polyline points="1105.7,520.9 1162.0,520.9" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="880" y1="35" x2="904" y2="35" stroke="#dc2626" stroke-width="3"/>
 <text x="911" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G Tmall</text>
 <text x="600.0" y="602" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>
