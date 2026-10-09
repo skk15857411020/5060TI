@@ -10,7 +10,10 @@ SPEC.loader.exec_module(watch)
 
 CFG = {
     "exclude_keywords": ["16G", "16GB", "二手", "拆机", "矿卡"],
-    "thresholds": {"normal": 2999, "good_brand": 3099},
+    "thresholds": {
+        "8G": {"normal": 2999, "good_brand": 3099},
+        "16G": {"normal": 3599, "good_brand": 3699},
+    },
     "good_brands": ["微星", "MSI", "华硕", "ASUS", "技嘉", "GIGABYTE"],
 }
 
@@ -18,9 +21,13 @@ CFG = {
 def test_target_match():
     assert watch.is_target_gpu("微星 RTX 5060 Ti 8G 万图师", CFG)
     assert watch.is_target_gpu("GIGABYTE RTX5060Ti 8GB", CFG)
+    assert watch.is_target_gpu("RTX5060-Ti 8GB", CFG)
     assert not watch.is_target_gpu("RTX 5060 8G", CFG)
     assert not watch.is_target_gpu("RTX 5060 Ti 16G", CFG)
     assert not watch.is_target_gpu("二手 RTX 5060 Ti 8G", CFG)
+    assert not watch.is_target_gpu("RTX 5060 Ti 8G / RTX 5060 8G", CFG)
+    assert not watch.is_target_gpu("RTX 5060 Ti 8G / RTX 5070", CFG)
+    assert not watch.is_target_gpu("RTX 5060 Ti 8G 游戏整机", CFG)
 
 
 def test_price_parse():
@@ -109,6 +116,7 @@ def test_smzdm_api_does_not_fall_back_to_model_number():
     deal_row = {
         **no_price_row,
         "article_title": "华硕 RTX 5060 Ti 8GB 国补后2899元",
+        "article_subtitle": "RTX 5060 Ti 8GB 国补后2899元",
         "article_url": "https://example.com/deal",
         "article_price": "3499",
     }
@@ -117,6 +125,85 @@ def test_smzdm_api_does_not_fall_back_to_model_number():
     assert candidates[0].price == 2899
     assert candidates[0].page_price == 3499
     assert candidates[0].price_type == "国补后价"
+    assert candidates[0].price_verified
+
+    low_row = {
+        **no_price_row,
+        "article_url": "https://example.com/ambiguous",
+        "article_price": "2899",
+    }
+    low_candidates = watch.fetch_smzdm_api(Session([low_row]), cfg)
+    assert len(low_candidates) == 1
+    assert not low_candidates[0].price_verified
+    assert not watch.should_alert(low_candidates[0], CFG)
+
+
+def test_smzdm_lowest_price_for_5060_does_not_alert():
+    row = {
+        "article_title": "华硕 RTX 5060 Ti 8G 显卡",
+        "article_content": "RTX 5060 8G 券后2899元；RTX 5060 Ti 8G 券后3299元",
+        "article_price": "2899",
+    }
+    price, _, _, _, verified, _ = watch.verify_smzdm_offer(row, CFG)
+    assert price == 3299
+    assert verified
+
+    row["article_content"] = "RTX 5060 8G 券后2899元"
+    price, _, _, _, verified, reason = watch.verify_smzdm_offer(row, CFG)
+    assert price == 2899
+    assert not verified
+    assert "明确价格" in reason
+    candidate = watch.Candidate("什么值得买API", "京东", row["article_title"], price,
+                                "https://example.com/deal", price_verified=verified)
+    assert not watch.should_alert(candidate, CFG)
+
+
+def test_smzdm_title_price_conflicting_with_5060_option_uses_ti_price():
+    row = {
+        "article_title": "RTX 5060 Ti 8G 券后2899元",
+        "article_subtitle": "RTX 5060 8G 券后2899元，5060 Ti 8G 券后3299元",
+        "article_price": "2899",
+    }
+    price, _, _, _, verified, _ = watch.verify_smzdm_offer(row, CFG)
+    assert verified
+    assert price == 3299
+
+
+def test_smzdm_headline_price_alone_is_not_verified():
+    row = {
+        "article_title": "RTX 5060 Ti 8G 券后2899元",
+        "article_price": "2899",
+    }
+    _, _, _, _, verified, reason = watch.verify_smzdm_offer(row, CFG)
+    assert not verified
+    assert "明确价格" in reason
+
+
+def test_smzdm_structured_sku_price_and_coupon():
+    row = {
+        "article_title": "RTX 5060 Ti 8G 显卡",
+        "article_price": "2799",
+        "sku_options": [
+            {"name": "RTX 5060 8G", "price": 2799},
+            {"name": "RTX 5060 Ti 8G", "price": 3199},
+        ],
+    }
+    price, _, _, _, verified, _ = watch.verify_smzdm_offer(row, CFG)
+    assert verified
+    assert price == 3199
+
+    row["article_subtitle"] = "RTX 5060 Ti 8G 国补后2999元"
+    price, _, kind, _, verified, _ = watch.verify_smzdm_offer(row, CFG)
+    assert verified
+    assert price == 2999
+    assert kind == "国补后价"
+
+
+def test_smzdm_bare_api_price_is_low_confidence():
+    row = {"article_title": "RTX 5060 Ti 8G 显卡", "article_price": "2899"}
+    price, _, _, _, verified, _ = watch.verify_smzdm_offer(row, CFG)
+    assert price == 2899
+    assert not verified
 
 
 def test_message_has_price_breakdown():
@@ -142,4 +229,5 @@ def test_threshold():
     c2 = watch.Candidate("x", "京东", "映众 RTX 5060 Ti 8G", 2999, "https://y")
     assert watch.threshold_for(c1, CFG) == 3099
     assert watch.threshold_for(c2, CFG) == 2999
+
 

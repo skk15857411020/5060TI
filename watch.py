@@ -68,6 +68,8 @@ class Candidate:
     page_price: Optional[float] = None
     price_type: str = "页面/API价"
     discount_info: str = ""
+    price_verified: bool = True
+    price_check: str = ""
 
 
 def now_cn() -> datetime:
@@ -337,10 +339,30 @@ def gpu_variant(text: str) -> str:
     return "16G" if has_16g else "8G"
 
 
+def _has_non_ti_5060(text: str) -> bool:
+    return bool(re.search(r"(?<!\d)5060(?![\s_-]*ti|\d)", text, re.I))
+
+
+def _has_other_gpu_model(text: str) -> bool:
+    return any(
+        model != "5060"
+        for model in re.findall(r"(?<!\d)(?:rtx\s*)?([345]0\d{2})(?!\d)", text, re.I)
+    )
+
+
 def is_target_gpu(text: str, cfg: dict) -> bool:
     """Match an unambiguous RTX 5060 Ti 8GB or 16GB listing."""
     t = normalize(text).lower().replace("-", " ").replace("_", " ")
     if not re.search(r"(?:rtx\s*)?5060\s*ti|5060ti", t, re.I):
+        return False
+
+    if _has_non_ti_5060(t):
+        return False
+
+    if _has_other_gpu_model(t):
+        return False
+
+    if re.search(r"整机|台式机|笔记本|显卡坞|主机", t):
         return False
 
     # Reject generic mixed-model SKU pages such as "RTX5060/5060Ti16G";
@@ -360,6 +382,112 @@ def is_target_gpu(text: str, cfg: dict) -> bool:
         if bad.lower() in t:
             return False
     return True
+
+
+def _smzdm_spec_texts(row: dict) -> list[str]:
+    """Keep each SKU/option's model and price together, without joining siblings."""
+    texts: list[str] = []
+
+    def visit(value: object, depth: int = 0) -> None:
+        if depth > 5:
+            return
+        if isinstance(value, str):
+            value = value.strip()
+            if value.startswith(("{", "[")):
+                try:
+                    visit(json.loads(value), depth + 1)
+                    return
+                except (ValueError, TypeError):
+                    pass
+            if value:
+                texts.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                visit(item, depth + 1)
+        elif isinstance(value, dict):
+            scalar = [
+                f"价格{v}元" if re.search(r"price|价", str(k), re.I) else str(v)
+                for k, v in value.items()
+                if isinstance(v, (str, int, float))
+            ]
+            if (
+                scalar
+                and not any(isinstance(v, (dict, list)) for v in value.values())
+                and any(re.search(r"price|价", str(k), re.I) for k in value)
+            ):
+                texts.append(" ".join(scalar))
+            for nested in value.values():
+                if isinstance(nested, (dict, list)):
+                    visit(nested, depth + 1)
+
+    for key, value in row.items():
+        if re.search(r"sku|spec|option|variant|规格|选项|款式", str(key), re.I):
+            visit(value)
+    return texts
+
+
+def verify_smzdm_offer(
+    row: dict, cfg: dict
+) -> tuple[Optional[float], Optional[float], str, str, bool, str]:
+    """Accept only a price explicitly paired with the target model and memory size."""
+    title = normalize(str(row.get("article_title") or ""))
+    variant = gpu_variant(title)
+    fields = [("title", title)]
+    fields.extend(
+        (key, str(row.get(key) or "").replace(title, ""))
+        for key in ("article_subtitle", "article_content", "article_tips")
+    )
+    fields.extend(("spec", item) for item in _smzdm_spec_texts(row))
+    raw_price = row.get("article_price")
+    if isinstance(raw_price, str):
+        fields.append(("article_price", raw_price))
+
+    bound: list[tuple[float, Optional[float], str, str]] = []
+    other_variant_prices: set[float] = set()
+    for source, field in fields:
+        plain = BeautifulSoup(field, "html.parser").get_text(" ", strip=True)
+        for clause in re.split(r"[，,。；;|\n\r/]+", plain):
+            clause = normalize(clause)
+            if not clause:
+                continue
+            offer, base, kind, discount = extract_offer_details(clause)
+            if offer is None:
+                continue
+            if _has_non_ti_5060(clause) or (
+                re.search(r"5060\s*ti", clause, re.I) and gpu_variant(clause) != variant
+            ):
+                other_variant_prices.add(offer)
+                continue
+            if not is_target_gpu(clause, cfg) or gpu_variant(clause) != variant:
+                continue
+            # A floor price on a multi-option listing does not identify the SKU.
+            if re.search(r"(?:低至|最低|起步|[¥￥]?\s*\d{3,5}(?:\.\d+)?\s*元?起)", clause):
+                continue
+            # A headline can advertise a low price for a different default
+            # option. Require pricing evidence from the deal details or SKU.
+            if source != "title":
+                bound.append((offer, base, kind, discount))
+
+    safe_bound = [item for item in bound if item[0] not in other_variant_prices]
+    if safe_bound:
+        # Prefer an explicitly labelled payable price over an ordinary list price.
+        safe_bound.sort(
+            key=lambda item: (item[2] not in {r[0] for r in FINAL_PRICE_RULES}, item[0])
+        )
+        price, _, kind, discount = safe_bound[0]
+        api_base = parse_price(str(raw_price or ""), allow_bare=True)
+        if api_base is not None and api_base < price:
+            api_base = None
+        return price, api_base, kind or "规格标价", discount, True, "规格与价格同段"
+    if bound:
+        reason = "同价也对应其他规格"
+    else:
+        reason = "未找到与5060 Ti具体显存规格同段的明确价格"
+
+    # Keep the lead for diagnostics, but do not use it for alerts or new chart points.
+    lead_text = normalize(" ".join(value for _, value in fields))
+    price, page_price, kind, discount = extract_offer_details(lead_text, raw_price)
+    return price, page_price, kind, discount, False, reason
 
 
 def platform_from_text(text: str) -> str:
@@ -481,6 +609,7 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                 "channel": 0,
                 "target": 0,
                 "price": 0,
+                "low_confidence": 0,
                 "fresh": 0,
                 "accepted": 0,
             }
@@ -495,20 +624,7 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                     continue
 
                 title = normalize(str(row.get("article_title") or ""))
-                deal_text = normalize(
-                    " ".join(
-                        str(row.get(key) or "")
-                        for key in (
-                            "article_title",
-                            "article_subtitle",
-                            "article_content",
-                            "article_tips",
-                            "article_mall",
-                            "article_price",
-                        )
-                    )
-                )
-                if not title or not is_target_gpu(deal_text, cfg):
+                if not title or not is_target_gpu(title, cfg):
                     stats["target"] += 1
                     continue
 
@@ -517,14 +633,19 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                     continue
 
                 raw_price = row.get("article_price")
-                price, page_price, price_type, discount_info = extract_offer_details(
-                    deal_text,
-                    raw_price,
-                    "API价",
-                )
+                (
+                    price, page_price, price_type, discount_info,
+                    verified, price_check,
+                ) = verify_smzdm_offer(row, cfg)
                 if price is None:
                     stats["price"] += 1
                     continue
+                if not verified:
+                    stats["low_confidence"] += 1
+                    print(
+                        f"[smzdm-price-check] low_confidence: {price_check}; "
+                        f"article_price={str(raw_price)[:80]!r}; title={title[:100]!r}"
+                    )
 
                 published = None
                 raw_ts = row.get("publish_date_lt")
@@ -559,10 +680,12 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                         url=href,
                         merchant=mall,
                         published_at=published.isoformat() if published else "",
-                        reliability="JSON搜索线索",
+                        reliability="JSON搜索线索" if verified else "低可信价格线索",
                         page_price=page_price,
                         price_type=price_type,
                         discount_info=discount_info,
+                        price_verified=verified,
+                        price_check=price_check,
                     )
                 )
                 seen.add(href)
@@ -574,6 +697,7 @@ def fetch_smzdm_api(session: requests.Session, cfg: dict) -> list[Candidate]:
                 f"accepted={stats['accepted']}, "
                 f"target_filtered={stats['target']}, "
                 f"price_filtered={stats['price']}, "
+                f"low_confidence={stats['low_confidence']}, "
                 f"stale_filtered={stats['fresh']}, "
                 f"channel_filtered={stats['channel']}"
             )
@@ -633,13 +757,21 @@ def fetch_smzdm_html(session: requests.Session, cfg: dict) -> list[Candidate]:
                 continue
 
             full_text = normalize(row.get_text(" ", strip=True))
-            price, page_price, price_type, discount_info = extract_offer_details(
-                full_text,
-                None,
-                "页面价",
-            )
+            offer_row = {
+                "article_title": title,
+                "article_content": full_text.replace(title, "", 1),
+            }
+            (
+                price, page_price, price_type, discount_info,
+                verified, price_check,
+            ) = verify_smzdm_offer(offer_row, cfg)
             if price is None:
                 continue
+            if not verified:
+                print(
+                    f"[smzdm-price-check] low_confidence: {price_check}; "
+                    f"title={title[:100]!r}"
+                )
 
             extras = normalize(
                 " ".join(x.get_text(" ", strip=True) for x in row.select(".feed-block-extras"))
@@ -658,10 +790,12 @@ def fetch_smzdm_html(session: requests.Session, cfg: dict) -> list[Candidate]:
                     url=href,
                     merchant="",
                     published_at=published.isoformat() if published else "",
-                    reliability="新优惠线索",
+                    reliability="新优惠线索" if verified else "低可信价格线索",
                     page_price=page_price,
                     price_type=price_type,
                     discount_info=discount_info,
+                    price_verified=verified,
+                    price_check=price_check,
                 )
             )
             seen.add(href)
@@ -1163,6 +1297,8 @@ def threshold_for(candidate: Candidate, cfg: dict) -> float:
 
 
 def should_alert(candidate: Candidate, cfg: dict) -> bool:
+    if not candidate.price_verified:
+        return False
     if candidate.price > threshold_for(candidate, cfg):
         return False
 
@@ -1301,12 +1437,14 @@ def main() -> int:
     for c in candidates:
         if c.source != "直链监控" and not is_target_gpu(c.title, cfg):
             continue
-        uniq[(c.url, int(c.price * 100))] = c
+        key = (c.url, int(c.price * 100))
+        if key not in uniq or c.price_verified:
+            uniq[key] = c
     candidates = list(uniq.values())
     candidates.sort(key=lambda x: x.price)
 
     history_rows = record_price_history(
-        candidates,
+        [c for c in candidates if c.price_verified],
         int(cfg.get("history_retention_days", 30)),
     )
     hourly_rows = build_hourly_min(history_rows)
@@ -1319,6 +1457,9 @@ def main() -> int:
     for c in candidates:
         limit = threshold_for(c, cfg)
         print(f"CHECK {c.price:.0f} <= {limit:.0f}? {c.platform} | {c.title[:80]}")
+        if not c.price_verified:
+            print(f"  -> skipped low-confidence price: {c.price_check}")
+            continue
         if not should_alert(c, cfg):
             continue
         if not dedupe_ok(c, state, cfg):
@@ -1364,4 +1505,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
