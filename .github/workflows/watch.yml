@@ -35,7 +35,12 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements-dev.txt
+
+      - name: Validate syntax and price attribution rules
+        run: |
+          python -m py_compile watch.py
+          python -m pytest tests -q
 
       - name: Restore latest 5-minute price history
         env:
@@ -68,6 +73,14 @@ jobs:
           retention-days: 35
           compression-level: 9
 
+      - name: Save price verification evidence
+        if: always() && hashFiles('data/price_verification.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: price-verification
+          path: data/price_verification.json
+          retention-days: 7
+
       - name: Persist state and public trend files
         if: always()
         run: |
@@ -86,3 +99,4 @@ jobs:
             git commit -m "chore: update price history and trend"
             git push
           fi
+

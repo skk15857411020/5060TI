@@ -1,0 +1,34 @@
+name: Price attribution regression tests
+
+on:
+  push:
+    paths:
+      - 'watch.py'
+      - 'tests/**'
+      - 'requirements*.txt'
+      - '.github/workflows/**'
+      - 'config.json'
+  pull_request:
+    paths:
+      - 'watch.py'
+      - 'tests/**'
+      - 'requirements*.txt'
+      - '.github/workflows/**'
+      - 'config.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements-dev.txt
+      - run: python -m py_compile watch.py
+      - run: python -m pytest tests -q

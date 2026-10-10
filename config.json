@@ -59,5 +59,8 @@
   "smzdm_pages": 3,
   "smzdm_page_size": 30,
   "alert_fresh_minutes": 240,
+  "detail_verify_budget_seconds": 35,
+  "detail_verify_max_articles": 4,
   "smzdm_channel_ids": []
 }
+

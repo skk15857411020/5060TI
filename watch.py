@@ -8,11 +8,12 @@ import math
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import quote, urljoin
+from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -28,6 +29,7 @@ DOCS_DIR = BASE_DIR / "docs"
 HOURLY_PATH = DOCS_DIR / "hourly_min.csv"
 CHART_PATH = DOCS_DIR / "price_chart.svg"
 INDEX_PATH = DOCS_DIR / "index.html"
+VERIFICATION_PATH = BASE_DIR / "data" / "price_verification.json"
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -70,6 +72,8 @@ class Candidate:
     discount_info: str = ""
     price_verified: bool = True
     price_check: str = ""
+    evidence_url: str = ""
+    purchase_check: str = ""
 
 
 def now_cn() -> datetime:
@@ -345,8 +349,12 @@ def _has_non_ti_5060(text: str) -> bool:
 
 def _has_other_gpu_model(text: str) -> bool:
     return any(
-        model != "5060"
-        for model in re.findall(r"(?<!\d)(?:rtx\s*)?([345]0\d{2})(?!\d)", text, re.I)
+        (explicit or contextual) != "5060"
+        for explicit, contextual in re.findall(
+            r"rtx\s*([345]0\d{2})(?!\d)|"
+            r"(?<!\d)([345]0\d{2})(?=[\s_-]*(?:ti\b|super\b|\d{1,2}\s*g))",
+            text, re.I,
+        )
     )
 
 
@@ -442,15 +450,25 @@ def verify_smzdm_offer(
     if isinstance(raw_price, str):
         fields.append(("article_price", raw_price))
 
-    bound: list[tuple[float, Optional[float], str, str]] = []
+    selected = normalize(str(row.get("article_selected_spec") or ""))
+    if selected and (
+        _has_non_ti_5060(selected) or _has_other_gpu_model(selected)
+        or (gpu_variant(selected) and gpu_variant(selected) != variant)
+        or re.search(r"整机|主机|台式机|笔记本", selected)
+    ):
+        offer = extract_offer_details(" ".join(value for _, value in fields), raw_price)
+        return (*offer, False, f"详情明确标注该价格对应其他规格: {selected[:180]}")
+
+    bound: list[tuple[float, Optional[float], str, str, str]] = []
     other_variant_prices: set[float] = set()
     for source, field in fields:
         plain = BeautifulSoup(field, "html.parser").get_text(" ", strip=True)
+        plain = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", plain)
         for clause in re.split(r"[，,。；;|\n\r/]+", plain):
             clause = normalize(clause)
             if not clause:
                 continue
-            offer, base, kind, discount = extract_offer_details(clause)
+            offer, base, kind, discount = extract_offer_details(clause, api_label="规格标价")
             if offer is None:
                 continue
             if _has_non_ti_5060(clause) or (
@@ -466,7 +484,7 @@ def verify_smzdm_offer(
             # A headline can advertise a low price for a different default
             # option. Require pricing evidence from the deal details or SKU.
             if source != "title":
-                bound.append((offer, base, kind, discount))
+                bound.append((offer, base, kind, discount, f"{source}: {clause[:220]}"))
 
     safe_bound = [item for item in bound if item[0] not in other_variant_prices]
     if safe_bound:
@@ -474,11 +492,11 @@ def verify_smzdm_offer(
         safe_bound.sort(
             key=lambda item: (item[2] not in {r[0] for r in FINAL_PRICE_RULES}, item[0])
         )
-        price, _, kind, discount = safe_bound[0]
+        price, _, kind, discount, evidence = safe_bound[0]
         api_base = parse_price(str(raw_price or ""), allow_bare=True)
         if api_base is not None and api_base < price:
             api_base = None
-        return price, api_base, kind or "规格标价", discount, True, "规格与价格同段"
+        return price, api_base, kind or "规格标价", discount, True, evidence
     if bound:
         reason = "同价也对应其他规格"
     else:
@@ -503,6 +521,248 @@ def platform_from_text(text: str) -> str:
         if any(k in t for k in keys):
             return name
     return "未知平台"
+
+
+def _verification_url_allowed(url: str, *, article_only: bool = False) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    domains = ("smzdm.com",) if article_only else (
+        "smzdm.com", "jd.com", "360buy.com", "tmall.com", "taobao.com",
+        "yangkeduo.com", "pinduoduo.com", "douyin.com",
+    )
+    return (
+        parsed.scheme == "https" and not parsed.username and not parsed.password
+        and parsed.port in (None, 443)
+        and any(host == domain or host.endswith("." + domain) for domain in domains)
+    )
+
+
+def _fetch_verification_page(session, url: str, deadline: float, *, article_only=False):
+    """Bound redirects, body size, retries and total extra verification time."""
+    for _ in range(5):
+        if not _verification_url_allowed(url, article_only=article_only):
+            raise ValueError("核验链接不属于支持的平台")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("核验时间预算用尽")
+        headers = {"User-Agent": UA}
+        if article_only and os.getenv("SMZDM_COOKIE", "").strip():
+            headers["Cookie"] = os.getenv("SMZDM_COOKIE").strip()
+        response = session.get(
+            url, headers=headers, allow_redirects=False, stream=True,
+            timeout=(min(2, remaining), min(5, remaining)),
+        )
+        try:
+            if response.status_code in (301, 302, 303, 307, 308):
+                url = urljoin(url, response.headers.get("Location", ""))
+                continue
+            response.raise_for_status()
+            chunks, size = [], 0
+            for chunk in response.iter_content(16384):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("核验时间预算用尽")
+                size += len(chunk)
+                if size > 1_500_000:
+                    raise ValueError("核验页面过大")
+                chunks.append(chunk)
+            encoding = response.encoding
+            if not encoding or encoding.lower() == "iso-8859-1":
+                encoding = "utf-8"
+            return b"".join(chunks).decode(encoding, errors="replace"), url
+        finally:
+            response.close()
+    raise ValueError("核验链接跳转过多")
+
+
+def extract_smzdm_detail(page: str, title: str) -> tuple[dict, str]:
+    """Read the article body, excluding page recommendations, comments and banners."""
+    soup = BeautifulSoup(page, "html.parser")
+    header = soup.select_one(".info.J_info")
+    if header and re.search(r"该商品已过期|商品已售罄|已下架|好价已过期", header.get_text(" ", strip=True)):
+        raise ValueError("爆料页面提示已过期或售罄")
+    body = soup.select_one(
+        ".item-name article.txt-detail, .article-content, .article-content-wrap, .price-content-wrap, "
+        ".item-box.article, #article-content"
+    )
+    if body is None:
+        raise ValueError("未找到爆料正文，可能需要登录或页面结构变化")
+    row = {"article_title": title}
+    # Current SMZDM pages explicitly identify the SKU behind the advertised price.
+    for paragraph in body.select('p[itemprop="description"]'):
+        description = BeautifulSoup(str(paragraph), "html.parser")
+        for br in description.select("br"):
+            br.replace_with("\n")
+        lines = [normalize(line) for line in description.get_text(" ").splitlines() if normalize(line)]
+        if not lines or not lines[0].startswith("该价格商品规格"):
+            continue
+        selected = re.sub(r"^该价格商品规格\s*[:：]\s*", "", lines[0])
+        selected = normalize(selected.replace("；", " ").replace(";", " "))
+        row["article_selected_spec"] = selected
+        if is_target_gpu(selected, {}) and gpu_variant(selected) == gpu_variant(title):
+            rest = " ".join(lines[1:])
+            for clause in re.split(r"[，,。；;]", rest):
+                if extract_final_price(clause)[0] is not None and not re.search(r"rtx|50\d{2}|40\d{2}", clause, re.I):
+                    row["selected_sku_offer"] = selected + " " + clause
+                    break
+        break
+    for noise in body.select(
+        "script, style, .comments, .comment, .recommend, .recommend-list, .related"
+    ):
+        noise.decompose()
+    # Keep paragraph/option boundaries while preserving inline model and price spans.
+    for block in body.select("p, li, tr, div"):
+        block.append("\n")
+    content = body.get_text(" ", strip=False).replace(title, "")
+    link = soup.select_one(
+        ".buy a[href], a.J_buy[href], .buy-btn a[href], a.buy-link[href], "
+        "a[href*='go.smzdm.com']"
+    )
+    purchase_url = urljoin("https://www.smzdm.com/", link.get("href", "")) if link else ""
+    row["article_content"] = content
+    return row, purchase_url
+
+
+def verify_purchase_sku(page: str, url: str, title: str, cfg: dict) -> tuple[str, str]:
+    """Confirm one concrete Product/Offer; aggregate prices never identify a SKU."""
+    soup = BeautifulSoup(page, "html.parser")
+    products = []
+
+    def visit(value):
+        if isinstance(value, list):
+            for child in value:
+                visit(child)
+        elif isinstance(value, dict):
+            types = value.get("@type", [])
+            if isinstance(types, str):
+                types = [types]
+            if "Product" in types:
+                products.append(value)
+            else:
+                for child in value.values():
+                    if isinstance(child, (dict, list)):
+                        visit(child)
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        try:
+            visit(json.loads(script.string or script.get_text()))
+        except (ValueError, TypeError):
+            continue
+    if len(products) != 1:
+        return "unknown", "未找到唯一商品的具体SKU信息"
+    product = products[0]
+    name = normalize(str(product.get("name") or ""))
+    if _has_non_ti_5060(name) or _has_other_gpu_model(name) or (
+        gpu_variant(name) and gpu_variant(name) != gpu_variant(title)
+    ) or re.search(r"整机|主机|台式机|笔记本", name):
+        return "mismatch", f"购买页实际规格不符: {name[:120]}"
+    if not is_target_gpu(name, cfg) or gpu_variant(name) != gpu_variant(title):
+        return "unknown", "商品页未明确标出目标型号和显存"
+    sku = str(product.get("sku") or "").strip()
+    offers = product.get("offers")
+    if isinstance(offers, list) and len(offers) == 1:
+        offers = offers[0]
+    if not sku or not isinstance(offers, dict) or offers.get("@type") != "Offer":
+        return "unknown", "商品页只有多规格价格或缺少具体SKU"
+    price = parse_price(str(offers.get("price") or ""))
+    if price is None or offers.get("priceCurrency") != "CNY":
+        return "unknown", "商品页没有有效人民币SKU标价"
+    # A JD SKU URL must identify the same SKU as the structured product record.
+    if (urlparse(url).hostname or "").lower() == "item.jd.com":
+        selected = re.fullmatch(r"/(\d+)\.html", urlparse(url).path)
+        if not selected or selected.group(1) != sku:
+            return "unknown", "商品链接与页面SKU编号未能对应"
+    else:
+        query = parse_qs(urlparse(url).query)
+        selected_skus = [v for k, values in query.items() if k.lower() in ("skuid", "sku_id") for v in values]
+        if sku not in selected_skus and str(offers.get("sku") or "") != sku:
+            return "unknown", "商品页未确认当前选中的具体SKU"
+    return "matched", f"购买页SKU={sku[:60]}，{name[:100]}，标价¥{price:.2f}（优惠价以爆料正文为依据）"
+
+
+def recheck_smzdm_candidates(candidates: list[Candidate], cfg: dict, session=None) -> None:
+    """Recheck recent alert-price leads before history, dedupe and notifications."""
+    budget = max(0, min(float(cfg.get("detail_verify_budget_seconds", 35)), 60))
+    limit = max(0, min(int(cfg.get("detail_verify_max_articles", 4)), 8))
+    deadline = time.monotonic() + budget
+    owned_session = session is None
+    # No automatic retries here: the monitoring job has a four-minute limit.
+    if session is None:
+        session = requests.Session()
+    cache = {}
+    try:
+        for candidate in sorted(candidates, key=lambda c: c.price):
+            if not candidate.source.startswith("什么值得买"):
+                continue
+            if candidate.price > threshold_for(candidate, cfg):
+                continue
+            if candidate.published_at:
+                try:
+                    published = datetime.fromisoformat(candidate.published_at)
+                    if now_cn() - published > timedelta(minutes=int(cfg.get("alert_fresh_minutes", 240))):
+                        continue
+                except (ValueError, TypeError):
+                    candidate.price_verified = False
+                    candidate.price_check = "发布时间格式无效，未做提醒核验"
+                    continue
+            key = (candidate.url, gpu_variant(candidate.title))
+            if key not in cache:
+                if len(cache) >= limit or time.monotonic() >= deadline:
+                    candidate.price_verified = False
+                    candidate.price_check = "本轮详情核验预算用尽，延后确认"
+                    continue
+                try:
+                    page, detail_url = _fetch_verification_page(
+                        session, candidate.url, deadline, article_only=True
+                    )
+                    row, purchase_url = extract_smzdm_detail(page, candidate.title)
+                    result = verify_smzdm_offer(row, cfg)
+                    purchase_check = "正文未提供可核验购买链接"
+                    if result[4] and purchase_url:
+                        product_page, product_url = _fetch_verification_page(session, purchase_url, deadline)
+                        status, purchase_check = verify_purchase_sku(product_page, product_url, candidate.title, cfg)
+                        if status != "matched":
+                            result = (*result[:4], False, purchase_check)
+                    cache[key] = (result, detail_url, purchase_check)
+                except Exception as exc:
+                    reason = str(exc)[:160] if isinstance(exc, (ValueError, TimeoutError)) else type(exc).__name__
+                    cache[key] = (None, candidate.url, f"详情核验失败: {reason}")
+            result, evidence_url, purchase_check = cache[key]
+            candidate.evidence_url = evidence_url
+            candidate.purchase_check = purchase_check
+            if result is None:
+                candidate.price_verified = False
+                candidate.price_check = purchase_check
+            else:
+                price, base, kind, discount, verified, evidence = result
+                candidate.price_verified = verified
+                candidate.price_check = f"详情页 {evidence}"
+                if verified and price is not None:
+                    candidate.price = price
+                    candidate.page_price = base
+                    candidate.price_type = kind
+                    candidate.discount_info = discount
+            candidate.reliability = "详情规格核验通过" if candidate.price_verified else "低可信价格线索"
+            print(f"[smzdm-detail-check] verified={candidate.price_verified} price={candidate.price:.2f} "
+                  f"reason={candidate.price_check!r} purchase={purchase_check!r} url={candidate.url}")
+    finally:
+        if owned_session:
+            session.close()
+
+
+def write_verification_report(candidates: list[Candidate]) -> None:
+    VERIFICATION_PATH.parent.mkdir(parents=True, exist_ok=True)
+    report = {
+        "checked_at": now_cn().isoformat(),
+        "candidates": [
+            {"title": c.title, "url": c.url, "price": c.price, "source": c.source,
+             "variant": gpu_variant(c.title), "verified": c.price_verified,
+             "stage": "详情页" if c.evidence_url else "搜索摘要",
+             "evidence": c.price_check, "evidence_url": c.evidence_url,
+             "purchase_check": c.purchase_check}
+            for c in candidates if c.source.startswith("什么值得买")
+        ],
+    }
+    VERIFICATION_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def parse_smzdm_time(text: str) -> Optional[datetime]:
@@ -979,6 +1239,8 @@ def record_price_history(candidates: list[Candidate], keep_days: int = 30) -> li
 
     best: dict[tuple[str, str], Candidate] = {}
     for cand in candidates:
+        if not cand.price_verified:
+            continue
         variant = gpu_variant(cand.title)
         if not variant:
             continue
@@ -1011,6 +1273,9 @@ def record_price_history(candidates: list[Candidate], keep_days: int = 30) -> li
                     f"{cand.page_price:.2f}" if cand.page_price is not None else ""
                 ),
                 "price_type": cand.price_type,
+                "price_evidence": cand.price_check,
+                "evidence_url": cand.evidence_url,
+                "purchase_check": cand.purchase_check,
                 "title": cand.title,
                 "source": cand.source,
                 "merchant": cand.merchant,
@@ -1034,6 +1299,9 @@ def record_price_history(candidates: list[Candidate], keep_days: int = 30) -> li
             "price",
             "page_price",
             "price_type",
+            "price_evidence",
+            "evidence_url",
+            "purchase_check",
             "title",
             "source",
             "merchant",
@@ -1367,6 +1635,8 @@ def format_message(c: Candidate, cfg: dict) -> str:
         f"页面/API价：{page_price}\n"
         f"最终到手价：¥{c.price:.0f}\n"
         f"价格类型：{c.price_type or '页面/API价'}\n"
+        f"核验依据：{c.price_check or c.reliability}\n"
+        f"购买规格：{c.purchase_check or '来源未提供额外SKU核验信息'}\n"
         f"优惠条件：{discount_info}\n"
         f"提醒线：≤¥{threshold:.0f}\n"
         f"来源：{c.source}（{c.reliability}）"
@@ -1433,6 +1703,9 @@ def main() -> int:
             errors.append(msg)
             print(msg, file=sys.stderr)
 
+    recheck_smzdm_candidates(candidates, cfg)
+    write_verification_report(candidates)
+
     uniq: dict[tuple[str, int], Candidate] = {}
     for c in candidates:
         if c.source != "直链监控" and not is_target_gpu(c.title, cfg):
@@ -1473,6 +1746,9 @@ def main() -> int:
             "time": now_cn().isoformat(),
             "title": c.title,
             "url": c.url,
+            "price_evidence": c.price_check,
+            "evidence_url": c.evidence_url,
+            "purchase_check": c.purchase_check,
         }
         hit_count += 1
         state_changed = True
@@ -1505,5 +1781,6 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
