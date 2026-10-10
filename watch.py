@@ -16,6 +16,7 @@ from typing import Optional
 from urllib.parse import parse_qs, quote, urljoin, urlparse
 
 import requests
+import news_sources
 from bs4 import BeautifulSoup
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -30,6 +31,7 @@ HOURLY_PATH = DOCS_DIR / "hourly_min.csv"
 CHART_PATH = DOCS_DIR / "price_chart.svg"
 INDEX_PATH = DOCS_DIR / "index.html"
 VERIFICATION_PATH = BASE_DIR / "data" / "price_verification.json"
+SOURCE_REPORT_PATH = BASE_DIR / "data" / "source_scan.json"
 
 UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -74,6 +76,9 @@ class Candidate:
     price_check: str = ""
     evidence_url: str = ""
     purchase_check: str = ""
+    product_url: str = ""
+    original_title: str = ""
+    requires_freshness: bool = False
 
 
 def now_cn() -> datetime:
@@ -759,10 +764,156 @@ def write_verification_report(candidates: list[Candidate]) -> None:
              "stage": "详情页" if c.evidence_url else "搜索摘要",
              "evidence": c.price_check, "evidence_url": c.evidence_url,
              "purchase_check": c.purchase_check}
-            for c in candidates if c.source.startswith("什么值得买")
+            for c in candidates if c.price_check or c.source.startswith("什么值得买")
         ],
     }
     VERIFICATION_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def additional_post_candidates(lead, collector, cfg) -> list[Candidate]:
+    """Social/comparison/feed quotes require a recent post and a confirmed product SKU."""
+    result = []
+    variants = [gpu_variant(lead.title)] if is_target_gpu(lead.title, cfg) else ["8G", "16G"]
+    for variant in variants:
+        target_title = lead.title if gpu_variant(lead.title) == variant and is_target_gpu(lead.title, cfg) else f"RTX 5060 Ti {variant} 显卡价格核验"
+        if not is_target_gpu(target_title, cfg):
+            continue
+        offer = verify_smzdm_offer({"article_title": target_title, "article_content": lead.text}, cfg)
+        price, base, kind, discount, bound, evidence = offer
+        if price is None:
+            continue
+        title = evidence.split(": ", 1)[-1] if bound else target_title
+        if not is_target_gpu(title, cfg):
+            title = target_title
+        candidate = Candidate(lead.source, platform_from_text(lead.text + " " + " ".join(lead.product_urls)),
+                              title, price, lead.url, published_at=lead.published_at,
+                              price_verified=False, price_check=evidence, page_price=base,
+                              price_type=kind, discount_info=discount, evidence_url=lead.url,
+                              original_title=lead.title, requires_freshness=True)
+        if not bound:
+            candidate.purchase_check = "帖子价格未绑定具体规格"
+        elif not lead.published_at:
+            candidate.purchase_check = "缺少可靠发布时间，不自动提醒"
+        elif price > threshold_for(candidate, cfg):
+            candidate.purchase_check = "未达到提醒线，保留线索"
+        else:
+            try:
+                age = now_cn() - datetime.fromisoformat(lead.published_at)
+                if age > timedelta(minutes=int(cfg.get("alert_fresh_minutes", 240))) or age < -timedelta(minutes=5):
+                    raise ValueError("帖子已过期或发布时间异常")
+                if not lead.product_urls:
+                    raise ValueError("没有可核对的具体商品链接")
+                # Do not pick a matching recommendation from multiple purchase options.
+                if len(lead.product_urls) != 1:
+                    raise ValueError("帖子含多个商品链接，无法确认价格绑定哪一个SKU")
+                page, final_url = collector.fetch(lead.product_urls[0], "sku")
+                status, check = verify_purchase_sku(page, final_url, candidate.title, cfg)
+                candidate.purchase_check = check
+                candidate.price_verified = status == "matched"
+                if candidate.price_verified:
+                    candidate.product_url = final_url
+                    candidate.platform = platform_from_text(final_url)
+            except Exception as exc:
+                candidate.purchase_check = str(exc)[:160] if isinstance(exc, (ValueError, TimeoutError)) else type(exc).__name__
+        candidate.reliability = "帖子价格及商品SKU核验通过" if candidate.price_verified else "低可信价格线索"
+        result.append(candidate)
+        if is_target_gpu(lead.title, cfg):
+            break
+    return result
+
+
+def current_sku_candidate(url: str, collector, cfg) -> Candidate:
+    page, final_url = collector.fetch(url, "sku")
+    record = news_sources.single_product(page)
+    parsed = urlparse(final_url)
+    jd_sku = re.fullmatch(r"/(\d+)\.html", parsed.path) if parsed.hostname == "item.jd.com" else None
+    name_node = BeautifulSoup(page, "html.parser").select_one(".sku-name")
+    title = normalize(str(record.get("name") or "")) if record else normalize(name_node.get_text(" ", strip=True)) if name_node else ""
+    if not is_target_gpu(title, cfg):
+        raise ValueError("商品页未明确标出5060 Ti具体显存规格")
+    if jd_sku and not record:
+        # Read a price indexed by the exact SKU, never a storefront minimum.
+        sku = jd_sku.group(1)
+        payload, _ = collector.fetch("https://p.3.cn/prices/mgets?skuIds=J_" + sku, "sku")
+        prices = json.loads(payload)
+        if not isinstance(prices, list):
+            raise ValueError("京东SKU价格接口未返回有效数据")
+        row = next((entry for entry in prices if str(entry.get("id")) == "J_" + sku), {})
+        price = parse_price(str(row.get("p") or ""))
+        if price is None:
+            raise ValueError("京东SKU无有效当前标价")
+        check = f"商品页规格={title[:100]}，价格接口SKU=J_{sku}"
+    else:
+        status, check = verify_purchase_sku(page, final_url, title, cfg)
+        if status != "matched":
+            raise ValueError(check)
+        offers = record["offers"]
+        if isinstance(offers, list):
+            offers = offers[0]
+        price = parse_price(str(offers.get("price") or ""))
+        if price is None:
+            raise ValueError("具体SKU缺少有效当前价格")
+    return Candidate("商品SKU监控", platform_from_text(final_url), title, price, final_url,
+                     published_at=now_cn().isoformat(), reliability="具体SKU当前标价",
+                     page_price=price, price_type="SKU当前标价", price_verified=True,
+                     price_check=check, purchase_check=check, evidence_url=final_url, product_url=final_url)
+
+
+def fetch_additional_sources(existing: list[Candidate], cfg: dict, session=None) -> list[Candidate]:
+    settings = cfg.get("additional_sources", {})
+    if not settings.get("enabled", False):
+        return []
+    owned = session is None
+    session = session or requests.Session()
+    collector = news_sources.Collector(session, {**settings, "user_agent": UA})
+    output, outcomes = [], []
+    try:
+        leads = collector.collect()
+        sku_settings = settings.get("sku_watch", {})
+        sku_urls = list(sku_settings.get("urls", []))
+        if sku_settings.get("discover_from_history", True):
+            sku_urls.extend(c.url for c in existing if c.source == "京东搜索" and is_target_gpu(c.title, cfg))
+            sku_urls.extend(row.get("url", "") for row in reversed(_read_history_rows())
+                            if row.get("source") in ("京东搜索", "商品SKU监控") and is_target_gpu(row.get("title", ""), cfg))
+            sku_urls.extend(url for lead in leads for url in lead.product_urls)
+        sku_urls = list(dict.fromkeys(url for url in sku_urls if news_sources.domain_matches(url, news_sources.DOMAINS["sku"])))
+        if sku_settings.get("enabled", True):
+            if not sku_urls:
+                collector.status.append({"source": "商品SKU", "status": "needs_input", "items": 0,
+                                         "reason": "等待指定商品链接或搜索中发现具体SKU"})
+            for url in sku_urls[:max(0, min(int(sku_settings.get("max_urls", 2)), 6))]:
+                try:
+                    candidate = current_sku_candidate(url, collector, cfg)
+                    output.append(candidate)
+                    collector.status.append({"source": "商品SKU", "url": url, "status": "ok", "items": 1,
+                                             "reason": candidate.price_check})
+                except Exception as exc:
+                    collector.status.append({"source": "商品SKU", "url": url, "status": "unavailable", "items": 0,
+                                             "reason": str(exc)[:160] if isinstance(exc, (ValueError, TimeoutError)) else type(exc).__name__})
+        for lead in leads:
+            try:
+                candidates = additional_post_candidates(lead, collector, cfg)
+            except Exception as exc:
+                outcomes.append({"source": lead.source, "title": lead.title, "url": lead.url,
+                                 "status": "lead_only", "reason": ["条目解析失败: " + type(exc).__name__]})
+                continue
+            output.extend(candidates)
+            outcomes.append({"source": lead.source, "title": lead.title, "url": lead.url,
+                             "published_at": lead.published_at, "product_urls": lead.product_urls,
+                             "status": "verified" if any(c.price_verified for c in candidates) else "lead_only",
+                             "reason": [c.purchase_check for c in candidates] or ["没有可绑定具体规格的价格"],
+                             "prices": [c.price for c in candidates]})
+        report = {"checked_at": now_cn().isoformat(), "requests": collector.calls,
+                  "sources": collector.status, "leads": outcomes}
+        SOURCE_REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SOURCE_REPORT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        for status in collector.status:
+            print(f"[extra-source] {status['source']}: {status['status']} items={status['items']} reason={status['reason']}")
+        print(f"[extra-sources] leads={len(leads)} candidates={len(output)} verified={sum(c.price_verified for c in output)} requests={collector.calls}")
+        return output
+    finally:
+        if owned:
+            session.close()
 
 
 def parse_smzdm_time(text: str) -> Optional[datetime]:
@@ -1508,6 +1659,19 @@ def write_dashboard(hourly_rows: list[dict]) -> None:
         rows_html = '<tr><td colspan="5">暂无价格数据</td></tr>'
         min_text = "暂无"
 
+    source_html = ""
+    if SOURCE_REPORT_PATH.exists():
+        try:
+            report = json.loads(SOURCE_REPORT_PATH.read_text(encoding="utf-8"))
+            rows = "".join(
+                "<tr><td>" + html.escape(item["source"]) + "</td><td>" +
+                html.escape({"ok": "已读取", "empty": "暂无条目", "needs_input": "待添加链接", "unavailable": "暂不可读取"}.get(item["status"], item["status"])) +
+                "</td><td>" + str(int(item.get("items", 0))) + "</td><td>" + html.escape(item.get("reason", "")) + "</td></tr>"
+                for item in report.get("sources", [])
+            )
+            source_html = '<div class="card"><h2>新增消息源状态</h2><p class="muted">帖子价格仅作线索；通过规格、SKU和时效核验后才提醒。</p><table><thead><tr><th>来源</th><th>状态</th><th>相关条目</th><th>说明</th></tr></thead><tbody>' + rows + '</tbody></table></div>'
+        except (ValueError, KeyError, TypeError, OSError):
+            pass
     page = f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -1545,6 +1709,7 @@ a{{color:#2563eb;text-decoration:none}}
 </table>
 <p><a href="hourly_min.csv">下载小时聚合 CSV</a></p>
 </div>
+{source_html}
 </main>
 </body>
 </html>"""
@@ -1569,6 +1734,13 @@ def should_alert(candidate: Candidate, cfg: dict) -> bool:
         return False
     if candidate.price > threshold_for(candidate, cfg):
         return False
+    if candidate.requires_freshness:
+        try:
+            age = now_cn() - datetime.fromisoformat(candidate.published_at)
+            if age > timedelta(minutes=int(cfg.get("alert_fresh_minutes", 240))) or age < -timedelta(minutes=5):
+                return False
+        except (ValueError, TypeError):
+            return False
 
     # Keep a longer window for chart/history, but do not alert on stale deal posts.
     if candidate.published_at and candidate.source.startswith("什么值得买"):
@@ -1583,7 +1755,7 @@ def should_alert(candidate: Candidate, cfg: dict) -> bool:
 
 
 def alert_key(c: Candidate) -> str:
-    base = c.url.split("#", 1)[0]
+    base = (c.product_url or c.url).split("#", 1)[0]
     return f"{gpu_variant(c.title)}|{c.platform}|{base}"
 
 
@@ -1631,6 +1803,7 @@ def format_message(c: Candidate, cfg: dict) -> str:
     return (
         f"🔥【RTX 5060 Ti {variant} 好价】\n"
         f"型号：{c.title}\n"
+        + (f"原帖：{c.original_title}\n" if c.original_title else "") +
         f"平台：{c.platform}{merchant}\n"
         f"页面/API价：{page_price}\n"
         f"最终到手价：¥{c.price:.0f}\n"
@@ -1703,6 +1876,10 @@ def main() -> int:
             errors.append(msg)
             print(msg, file=sys.stderr)
 
+    try:
+        candidates.extend(fetch_additional_sources(candidates, cfg))
+    except Exception as exc:
+        print(f"[extra-sources] failed: {type(exc).__name__}", file=sys.stderr)
     recheck_smzdm_candidates(candidates, cfg)
     write_verification_report(candidates)
 
@@ -1781,6 +1958,7 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 
 
 

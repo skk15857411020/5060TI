@@ -39,7 +39,7 @@ jobs:
 
       - name: Validate syntax and price attribution rules
         run: |
-          python -m py_compile watch.py
+          python -m py_compile watch.py news_sources.py
           python -m pytest tests -q
 
       - name: Restore latest 5-minute price history
@@ -81,6 +81,14 @@ jobs:
           path: data/price_verification.json
           retention-days: 7
 
+      - name: Save additional source status and leads
+        if: always() && hashFiles('data/source_scan.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-scan
+          path: data/source_scan.json
+          retention-days: 7
+
       - name: Persist state and public trend files
         if: always()
         run: |
@@ -99,4 +107,5 @@ jobs:
             git commit -m "chore: update price history and trend"
             git push
           fi
+
 

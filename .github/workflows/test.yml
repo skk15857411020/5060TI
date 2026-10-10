@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'watch.py'
+      - 'news_sources.py'
       - 'tests/**'
       - 'requirements*.txt'
       - '.github/workflows/**'
@@ -11,6 +12,7 @@ on:
   pull_request:
     paths:
       - 'watch.py'
+      - 'news_sources.py'
       - 'tests/**'
       - 'requirements*.txt'
       - '.github/workflows/**'
@@ -30,5 +32,6 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements-dev.txt
-      - run: python -m py_compile watch.py
+      - run: python -m py_compile watch.py news_sources.py
       - run: python -m pytest tests -q
+

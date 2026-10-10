@@ -61,6 +61,20 @@
   "alert_fresh_minutes": 240,
   "detail_verify_budget_seconds": 35,
   "detail_verify_max_articles": 4,
+  "additional_sources": {
+    "enabled": true,
+    "budget_seconds": 30,
+    "max_requests": 10,
+    "max_items_per_source": 20,
+    "manmanbuy": {"enabled": true, "urls": [], "search_keywords": ["RTX 5060 Ti 8G", "RTX 5060 Ti 16G"]},
+    "bilibili": {"enabled": true, "urls": [], "search_keywords": ["RTX 5060 Ti 8G", "RTX 5060 Ti 16G"]},
+    "xiaohongshu": {"enabled": true, "urls": [], "search_keywords": [], "setup_note": "需添加公开笔记链接；未登录搜索页不提供帖子数据"},
+    "weibo": {"enabled": true, "urls": [], "search_keywords": [], "setup_note": "需添加可公开读取的帖子链接；搜索入口目前要求访客登录"},
+    "gwdang": {"enabled": true, "urls": [], "search_keywords": [], "setup_note": "需添加可公开读取的比价链接；搜索入口目前要求验证码"},
+    "rss": [{"name": "RSS·IT之家", "url": "https://www.ithome.com/rss/", "enabled": true}],
+    "sku_watch": {"enabled": true, "urls": [], "discover_from_history": true, "max_urls": 2}
+  },
   "smzdm_channel_ids": []
 }
+
 
