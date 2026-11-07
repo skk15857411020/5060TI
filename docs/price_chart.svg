@@ -16,28 +16,28 @@
 <text x="80" y="81.0" text-anchor="end" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">¥8200</text>
 <line x1="92" y1="76" x2="92" y2="542" stroke="#9ca3af" stroke-width="1"/>
 <line x1="92" y1="542" x2="1162" y2="542" stroke="#9ca3af" stroke-width="1"/>
-<text x="92.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-08</text>
+<text x="92.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
 <text x="306.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
 <text x="520.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
 <text x="734.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
 <text x="948.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
 <text x="1162.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
-<polyline points="92.0,187.9 143.0,187.9 193.9,187.9 244.9,187.9 295.8,187.9 346.8,187.9 397.7,187.9 448.7,187.9 499.6,187.9 550.6,187.9 601.5,187.9 652.5,215.9 703.4,215.9 754.4,215.9 805.3,215.9 856.3,215.9 907.2,215.9 958.2,215.9 1009.1,215.9 1060.1,215.9 1111.0,215.9 1162.0,215.9" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,187.9 154.9,187.9 217.9,187.9 280.8,187.9 343.8,187.9 406.7,187.9 469.6,187.9 532.6,215.9 595.5,215.9 658.5,215.9 721.4,215.9 784.4,215.9 847.3,215.9 910.2,215.9 973.2,215.9 1036.1,215.9 1099.1,215.9 1162.0,215.9" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="35" x2="644" y2="35" stroke="#2563eb" stroke-width="3"/>
 <text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G JD</text>
-<polyline points="92.0,85.5 143.0,85.5 193.9,85.5 244.9,85.5 295.8,85.5 346.8,85.5 397.7,85.5 448.7,85.5 499.6,85.5 550.6,85.5 601.5,85.5 652.5,85.5 703.4,85.5 754.4,85.5 805.3,85.5 856.3,85.5 907.2,85.5 958.2,85.5" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,85.5 154.9,85.5 217.9,85.5 280.8,85.5 343.8,85.5 406.7,85.5 469.6,85.5 532.6,85.5 595.5,85.5 658.5,85.5 721.4,85.5 784.4,85.5 847.3,85.5 910.2,85.5" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="750" y1="35" x2="774" y2="35" stroke="#16a34a" stroke-width="3"/>
 <text x="781" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G PDD</text>
-<polyline points="92.0,85.4 143.0,85.4 193.9,85.4 244.9,85.4 295.8,85.4 346.8,85.4 397.7,85.4 448.7,85.4 499.6,85.4 550.6,85.4 601.5,85.4 652.5,85.4 703.4,85.4 754.4,85.4 805.3,85.4 856.3,85.4 907.2,85.4 1111.0,528.2 1162.0,528.2" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,85.4 154.9,85.4 217.9,85.4 280.8,85.4 343.8,85.4 406.7,85.4 469.6,85.4 532.6,85.4 595.5,85.4 658.5,85.4 721.4,85.4 784.4,85.4 847.3,85.4 1099.1,528.2 1162.0,528.2" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="880" y1="35" x2="904" y2="35" stroke="#dc2626" stroke-width="3"/>
 <text x="911" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G Tmall</text>
-<polyline points="92.0,430.3 143.0,430.3 193.9,430.3 244.9,430.3 295.8,430.3 346.8,430.3 397.7,430.3 448.7,430.3 499.6,430.3 550.6,430.3 601.5,430.3 652.5,430.3 703.4,430.3 754.4,430.3 805.3,430.3 856.3,430.3 907.2,430.3 958.2,430.3 1009.1,430.3 1060.1,430.3 1111.0,430.3 1162.0,430.3" fill="none" stroke="#9333ea" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,430.3 154.9,430.3 217.9,430.3 280.8,430.3 343.8,430.3 406.7,430.3 469.6,430.3 532.6,430.3 595.5,430.3 658.5,430.3 721.4,430.3 784.4,430.3 847.3,430.3 910.2,430.3 973.2,430.3 1036.1,430.3 1099.1,430.3 1162.0,430.3" fill="none" stroke="#9333ea" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="1010" y1="35" x2="1034" y2="35" stroke="#9333ea" stroke-width="3"/>
 <text x="1041" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G Douyin</text>
-<polyline points="92.0,467.5 143.0,467.5 193.9,467.5 244.9,467.5 295.8,467.5 346.8,467.5 397.7,467.5 448.7,467.5 499.6,467.5 550.6,467.5 601.5,467.5 652.5,467.5 703.4,467.5 754.4,467.5 805.3,467.5 856.3,467.5 907.2,476.9 958.2,476.9 1009.1,476.9 1060.1,476.9 1111.0,476.9 1162.0,476.9" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,467.5 154.9,467.5 217.9,467.5 280.8,467.5 343.8,467.5 406.7,467.5 469.6,467.5 532.6,467.5 595.5,467.5 658.5,467.5 721.4,467.5 784.4,467.5 847.3,476.9 910.2,476.9 973.2,476.9 1036.1,476.9 1099.1,476.9 1162.0,476.9" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="59" x2="644" y2="59" stroke="#ea580c" stroke-width="3"/>
 <text x="651" y="64" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G JD</text>
-<polyline points="92.0,514.1 143.0,514.1 193.9,514.1 244.9,514.1 295.8,514.1 346.8,514.1 397.7,514.1 448.7,514.1 499.6,514.1 550.6,514.1 601.5,514.1 652.5,514.1 703.4,514.1 754.4,514.1 805.3,514.1 856.3,320.3 907.2,320.3 1111.0,476.9 1162.0,476.9" fill="none" stroke="#0891b2" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,514.1 154.9,514.1 217.9,514.1 280.8,514.1 343.8,514.1 406.7,514.1 469.6,514.1 532.6,514.1 595.5,514.1 658.5,514.1 721.4,514.1 784.4,320.3 847.3,320.3 1099.1,476.9 1162.0,476.9" fill="none" stroke="#0891b2" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="750" y1="59" x2="774" y2="59" stroke="#0891b2" stroke-width="3"/>
 <text x="781" y="64" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G Tmall</text>
 <text x="600.0" y="602" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>
