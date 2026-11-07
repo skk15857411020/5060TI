@@ -22,22 +22,22 @@
 <text x="734.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
 <text x="948.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
 <text x="1162.0" y="570" text-anchor="middle" font-family="Arial, sans-serif" font-size="13" fill="#6b7280">10-09</text>
-<polyline points="92.0,187.9 154.9,187.9 217.9,187.9 280.8,187.9 343.8,187.9 406.7,187.9 469.6,187.9 532.6,215.9 595.5,215.9 658.5,215.9 721.4,215.9 784.4,215.9 847.3,215.9 910.2,215.9 973.2,215.9 1036.1,215.9 1099.1,215.9 1162.0,215.9" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,187.9 174.3,187.9 256.6,187.9 338.9,215.9 421.2,215.9 503.5,215.9 585.8,215.9 668.2,215.9 750.5,215.9 832.8,215.9 915.1,215.9 997.4,215.9 1079.7,215.9 1162.0,215.9" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="35" x2="644" y2="35" stroke="#2563eb" stroke-width="3"/>
 <text x="651" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G JD</text>
-<polyline points="92.0,85.5 154.9,85.5 217.9,85.5 280.8,85.5 343.8,85.5 406.7,85.5 469.6,85.5 532.6,85.5 595.5,85.5 658.5,85.5 721.4,85.5 784.4,85.5 847.3,85.5 910.2,85.5" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,85.5 174.3,85.5 256.6,85.5 338.9,85.5 421.2,85.5 503.5,85.5 585.8,85.5 668.2,85.5 750.5,85.5 832.8,85.5" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="750" y1="35" x2="774" y2="35" stroke="#16a34a" stroke-width="3"/>
 <text x="781" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G PDD</text>
-<polyline points="92.0,85.4 154.9,85.4 217.9,85.4 280.8,85.4 343.8,85.4 406.7,85.4 469.6,85.4 532.6,85.4 595.5,85.4 658.5,85.4 721.4,85.4 784.4,85.4 847.3,85.4 1099.1,528.2 1162.0,528.2" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,85.4 174.3,85.4 256.6,85.4 338.9,85.4 421.2,85.4 503.5,85.4 585.8,85.4 668.2,85.4 750.5,85.4 1079.7,528.2 1162.0,528.2" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="880" y1="35" x2="904" y2="35" stroke="#dc2626" stroke-width="3"/>
 <text x="911" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">16G Tmall</text>
-<polyline points="92.0,430.3 154.9,430.3 217.9,430.3 280.8,430.3 343.8,430.3 406.7,430.3 469.6,430.3 532.6,430.3 595.5,430.3 658.5,430.3 721.4,430.3 784.4,430.3 847.3,430.3 910.2,430.3 973.2,430.3 1036.1,430.3 1099.1,430.3 1162.0,430.3" fill="none" stroke="#9333ea" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,430.3 174.3,430.3 256.6,430.3 338.9,430.3 421.2,430.3 503.5,430.3 585.8,430.3 668.2,430.3 750.5,430.3 832.8,430.3 915.1,430.3 997.4,430.3 1079.7,430.3 1162.0,430.3" fill="none" stroke="#9333ea" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="1010" y1="35" x2="1034" y2="35" stroke="#9333ea" stroke-width="3"/>
 <text x="1041" y="40" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G Douyin</text>
-<polyline points="92.0,467.5 154.9,467.5 217.9,467.5 280.8,467.5 343.8,467.5 406.7,467.5 469.6,467.5 532.6,467.5 595.5,467.5 658.5,467.5 721.4,467.5 784.4,467.5 847.3,476.9 910.2,476.9 973.2,476.9 1036.1,476.9 1099.1,476.9 1162.0,476.9" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,467.5 174.3,467.5 256.6,467.5 338.9,467.5 421.2,467.5 503.5,467.5 585.8,467.5 668.2,467.5 750.5,476.9 832.8,476.9 915.1,476.9 997.4,476.9 1079.7,476.9 1162.0,476.9" fill="none" stroke="#ea580c" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="620" y1="59" x2="644" y2="59" stroke="#ea580c" stroke-width="3"/>
 <text x="651" y="64" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G JD</text>
-<polyline points="92.0,514.1 154.9,514.1 217.9,514.1 280.8,514.1 343.8,514.1 406.7,514.1 469.6,514.1 532.6,514.1 595.5,514.1 658.5,514.1 721.4,514.1 784.4,320.3 847.3,320.3 1099.1,476.9 1162.0,476.9" fill="none" stroke="#0891b2" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+<polyline points="92.0,514.1 174.3,514.1 256.6,514.1 338.9,514.1 421.2,514.1 503.5,514.1 585.8,514.1 668.2,320.3 750.5,320.3 1079.7,476.9 1162.0,476.9" fill="none" stroke="#0891b2" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
 <line x1="750" y1="59" x2="774" y2="59" stroke="#0891b2" stroke-width="3"/>
 <text x="781" y="64" font-family="Arial, sans-serif" font-size="13" fill="#374151">8G Tmall</text>
 <text x="600.0" y="602" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#9ca3af">Hourly minimum from 5-minute samples · Beijing time</text>
